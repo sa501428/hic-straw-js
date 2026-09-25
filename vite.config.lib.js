@@ -6,16 +6,17 @@ export default defineConfig({
     lib: {
       entry: resolve(__dirname, 'src/index.js'),
       name: 'HicStraw',
-      fileName: (format) => `hic-straw.${format === 'es' ? 'esm' : 'cjs'}.js`,
+      fileName: (format) => format === 'es' ? 'hic-straw.esm.js' : 'hic-straw.cjs',
       formats: ['es', 'cjs'],
     },
     rollupOptions: {
-      // Don't bundle hdf5-indexed-reader (or its transitive deps like node-fetch)
-      // into the library — consumers install it themselves. This avoids dragging
-      // Node-only modules (node:http, node:fs, etc.) into browser builds.
+      // Keep runtime dependencies external. In particular, bundling zstddec can
+      // capture another module's lexical `fetch` binding in the CommonJS build,
+      // which prevents its WebAssembly decoder from initializing under Node.
       external: [
         /^hdf5-indexed-reader(\/|$)/,
         'node-fetch',
+        'zstddec',
       ],
       output: {
         esModule: true,

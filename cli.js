@@ -3,7 +3,7 @@ import NodeLocalFile from "./src/io/nodeLocalFile.mjs"
 import Straw from "./src/index.js"
 
 const [, , ...args] = process.argv
-const usageString = "Usage: $straw normalization hicfile region1 region2 units resolution"
+const usageString = "Usage: $straw normalization hicfile region1 region2 units resolution [observed|oe|expected]"
 const a = prepArgs(args)
 
 if (a.options.has("--meta") && a.positional.length === 1) {
@@ -65,10 +65,11 @@ async function printContacts(args) {
     const region2 = args[3]
     const units = args[4]
     const resolution = parseInt(args[5].replace(/(,)/g, ""))
+    const matrixType = args[6] || 'observed'
     try {
-        const contactRecords = await fetchContacts(normalization, filepath, region1, region2, units, resolution)
+        const contactRecords = await fetchContacts(normalization, filepath, region1, region2, units, resolution, matrixType)
 
-        for (record of contactRecords) {
+        for (const record of contactRecords) {
             console.log(record.bin1.toString() + "\t" + record.bin2.toString() + "\t" + record.counts.toString())
         }
     } catch (e) {
@@ -76,12 +77,12 @@ async function printContacts(args) {
     }
 }
 
-async function fetchContacts(normalization, filepath, region1, region2, units, resolution) {
+async function fetchContacts(normalization, filepath, region1, region2, units, resolution, matrixType) {
 
     const r1 = parseRegion(region1)
     const r2 = parseRegion(region2)
     const straw = getStraw(filepath);
-    return straw.getContactRecords(normalization, r1, r2, units, resolution)
+    return straw.getContactRecords(normalization, r1, r2, units, resolution, matrixType)
 
 }
 
@@ -92,7 +93,7 @@ function parseRegion(region) {
     const chr = t1[0]
     let start
     let end
-    if (t1.length === 0) {
+    if (t1.length === 1) {
         start = 0
         end = Number.MAX_VALUE
     } else if (t1.length === 2) {

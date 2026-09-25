@@ -8,7 +8,7 @@ live contact and distance maps from 3D chromatin structure data for
 
 ## Installation
 
-Requires Node 18+ (https://nodejs.org)
+Requires Node 20.19+ or 22.12+ (https://nodejs.org)
 
 ```
 npm install hic-straw
@@ -24,21 +24,53 @@ Arguments
 * normalization - string indicating normalization scheme
 * region 1  {chr, start, end} - genomic region in base pair or fragment units.  Interval convention is zero based 1/2 open
 * region 2  {chr, start, end}
-* units -- "BP" for base pairs.  Currently this is the only unit supported
+* units -- `"BP"` for base pairs or `"FRAG"` for restriction-fragment coordinates
 * binSize -- size of each bin in base pair or fragment units.  Bins are square
+* matrixType -- optional `"observed"` (default), `"oe"`, or `"expected"`. The latter two currently require v10 and a cis query.
+
+#### getExpectedValues
+
+For v10 files, `getExpectedValues(normalization, chromosome, units, binSize,
+start?, end?)` returns the effective expected-value vector after applying the
+chromosome scale factor. `start` and `end` are optional half-open vector-index
+bounds. `hasExpectedValues(...)` tests whether the requested capability is
+advertised without reading its chunks.
+
+### `.hic` format support
+
+hic-straw reads versions 5 through 10. Version 10 uses its independent binary
+layout, exact per-block index, Zstandard-compressed blocks, chunked normalization
+vectors, and materialized or exactly derived resolutions. The public query API is
+the same for legacy and v10 observed contacts; v10 additionally exposes expected
+vectors and expected/OE contact queries.
+
+V10 integer counts are decoded and derived with unsigned 64-bit precision. A raw
+count is returned as a JavaScript `number` when it is no greater than
+`Number.MAX_SAFE_INTEGER`, and as a `bigint` otherwise. Normalized contacts and
+`SCORE_FLOAT32` matrices return numbers.
+
+The v10 API covers metadata, raw and normalized observed contacts, BP/FRAG
+units, normalization and expected-value vectors, and `oe`/`expected` contact
+queries. Expected-value queries use independently chunked `EVI0` or `NEVI`
+vectors and chromosome scale factors; they are defined only for cis matrices.
 
 
 ## Configuration
 
 The object passed to `new Straw({...})` names the file to read — `url`, `file`, or
-`blob` — and may carry the following optional properties. Everything here applies
-to remote (URL) reads only.
+`blob` — and may carry the following optional properties. The first three apply
+to remote URL reads; `fileSize` applies to custom byte sources.
 
 | Property | Type | Purpose |
 | --- | --- | --- |
 | `headers` | object | Extra request headers. Not modified; `Range` is added to a copy per read. |
 | `oauthToken` | string, or a function returning one (or a promise for one) | Sent as `Authorization: Bearer …`. |
 | `mapUrl` | `(url: string) => string` | Rewrites the URL before it is fetched. See below. |
+| `fileSize` | non-negative safe integer | Total length for a custom v10 `file` adapter without `getSize()` or `size`. |
+
+Custom byte sources used with v10 must expose their total length through an
+asynchronous `getSize()` method, a numeric `size` property, or `config.fileSize`.
+The built-in Node, browser-blob, and remote sources provide this automatically.
 
 ### mapUrl
 
@@ -133,7 +165,7 @@ const straw = new Straw({ file: nodeLocalFile })
 
 **remote file**
 
-Node 18+ includes native `fetch`. For remote files:
+Supported Node versions include native `fetch`. For remote files:
 
 ```javascript
 import Straw from 'hic-straw'

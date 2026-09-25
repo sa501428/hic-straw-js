@@ -126,4 +126,22 @@ describe('RemoteFile read', function () {
         assert.equal(error.url, 'http://localhost:9000/encode/files/ENCFF464WXY/@@download/ENCFF464WXY.hic')
         assert.isNotEmpty(error.message)
     })
+
+    it('falls back to HEAD when a range response does not expose the total size', async function () {
+        const methods = []
+        vi.stubGlobal('fetch', async (url, init) => {
+            methods.push(init.method)
+            if (init.method === 'HEAD') {
+                return {status: 200, headers: new Headers({'Content-Length': '1234'})}
+            }
+            return {
+                status: 206,
+                headers: new Headers({'Content-Length': '1'}),
+                arrayBuffer: async () => new Uint8Array([7]).buffer
+            }
+        })
+        const file = new RemoteFile({url: 'https://example.org/matrix.hic'})
+        assert.equal(await file.getSize(), 1234)
+        assert.deepEqual(methods, ['GET', 'HEAD'])
+    })
 })

@@ -14,6 +14,10 @@ class BrowserLocalFile {
 
         }
     }
+
+    async getSize() {
+        return this.file.size
+    }
 }
 
 export default BrowserLocalFile

@@ -11,6 +11,24 @@ renders nothing and has no UI.
 This glossary is grown lazily: terms are added when a decision actually turns on
 them, not upfront.
 
+## File versions
+
+**Legacy reader** — The established versions 5–9 parser in `src/hicFile.js`.
+Its zlib blocks and legacy footer/vector layouts stay separate from v10.
+
+**V10 reader** — `src/v10/hicFile.js` and its strict binary helpers. V10 uses a
+locator header, numeric matrix directory, exact logical-block indexes,
+independent Zstandard frames, derived resolutions, and chunked vectors. The
+public `HicFile` routes to it after reading the signature and version.
+
+**Exact count** — A v10 `COUNT_UINT` value held internally as `BigInt`. At the
+public contact-record boundary it remains a `bigint` only when conversion to a
+number would lose integer precision.
+
+**Expected vector** — A v10 `EVI0` (raw) or `NEVI` (normalization-specific)
+distance vector. Its public values include the chromosome scale factor, and its
+chunks are read only for the requested distance range.
+
 ## Transport
 
 **Remote file** — `src/io/remoteFile.js`, the single place hic-straw reads bytes

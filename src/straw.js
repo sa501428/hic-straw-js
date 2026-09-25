@@ -16,12 +16,20 @@ class Straw {
     }
 
     //straw <NONE/VC/VC_SQRT/KR> <ile> <chr1>[:x1:x2] <chr2>[:y1:y2] <BP/FRAG> <binsize>
-    async getContactRecords(normalization, region1, region2, units, binsize) {
-        return this.hicFile.getContactRecords(normalization, region1, region2, units, binsize);
+    async getContactRecords(normalization, region1, region2, units, binsize, matrixType = 'observed') {
+        return this.hicFile.getContactRecords(normalization, region1, region2, units, binsize, false, matrixType);
     }
 
     async getNormalizationOptions() {
         return this.hicFile.getNormalizationOptions()
+    }
+
+    async getExpectedValues(normalization, chromosome, units, binsize, start = 0, end) {
+        return this.hicFile.getExpectedValues(normalization, chromosome, units, binsize, start, end)
+    }
+
+    async hasExpectedValues(normalization, chromosome, units, binsize) {
+        return this.hicFile.hasExpectedValues(normalization, chromosome, units, binsize)
     }
 
     async getNVI() {

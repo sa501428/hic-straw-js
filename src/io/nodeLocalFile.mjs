@@ -3,6 +3,7 @@ import * as fs from "fs"
 
 let fsOpen =util.promisify(fs.open)
 let fsRead =util.promisify(fs.read)
+let fsStat = util.promisify(fs.stat)
 
 class NodeLocalFile {
 
@@ -22,9 +23,17 @@ class NodeLocalFile {
         })
 
         //TODO -- compare result.bytesRead with length
-        const b = result.buffer;
+        const b = result.buffer.subarray(0, result.bytesRead);
         const arrayBuffer = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
         return arrayBuffer
+    }
+
+    async getSize() {
+        if (this.size === undefined) {
+            const stat = await fsStat(this.path)
+            this.size = stat.size
+        }
+        return this.size
     }
 }
 

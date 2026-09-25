@@ -19,11 +19,17 @@ class RemoteFile {
         const url = this.url
         headers['User-Agent'] = 'IGV'
         if (this.config.oauthToken) {
-            const token = resolveToken(this.config.oauthToken)
+            const token = await resolveToken(this.config.oauthToken)
             headers['Authorization'] = `Bearer ${token}`
         }
 
-        const response = await fetch(url, {
+        // Some CommonJS dependencies expose node-fetch's module namespace on
+        // globalThis.fetch. Accept its default export as a compatibility path.
+        const fetchFunction = typeof globalThis.fetch === 'function'
+            ? globalThis.fetch
+            : globalThis.fetch?.default
+        if (typeof fetchFunction !== 'function') throw Error('No fetch implementation is available')
+        const response = await fetchFunction(url, {
             method: 'GET',
             headers: headers,
             redirect: 'follow',
@@ -41,7 +47,21 @@ class RemoteFile {
             err.url = url                    // the url actually fetched, after mapping
             throw err
         } else {
-            return response.arrayBuffer()
+            const contentRange = response.headers?.get?.('content-range')
+            if (contentRange) {
+                const match = /\/([0-9]+)$/.exec(contentRange)
+                if (match) this.size = Number(match[1])
+            } else if (status === 200) {
+                const contentLength = response.headers?.get?.('content-length')
+                if (contentLength) this.size = Number(contentLength)
+            }
+
+            const result = await response.arrayBuffer()
+            if (status === 200 && result.byteLength !== length) {
+                if (this.size === undefined) this.size = result.byteLength
+                return result.slice(position, position + length)
+            }
+            return result
         }
 
         /**
@@ -57,6 +77,30 @@ class RemoteFile {
             }
         }
 
+    }
+
+    async getSize() {
+        if (this.size === undefined) await this.read(0, 1)
+        if (this.size === undefined) {
+            const headers = {...this.config.headers}
+            if (this.config.oauthToken) {
+                const token = typeof this.config.oauthToken === 'function'
+                    ? await Promise.resolve(this.config.oauthToken())
+                    : this.config.oauthToken
+                headers.Authorization = `Bearer ${token}`
+            }
+            const fetchFunction = typeof globalThis.fetch === 'function'
+                ? globalThis.fetch
+                : globalThis.fetch?.default
+            if (typeof fetchFunction === 'function') {
+                const response = await fetchFunction(this.url, {method: 'HEAD', headers, redirect: 'follow', mode: 'cors'})
+                if (response.status < 400) {
+                    const contentLength = response.headers?.get?.('content-length')
+                    if (contentLength) this.size = Number(contentLength)
+                }
+            }
+        }
+        return this.size
     }
 }
 

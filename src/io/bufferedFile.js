@@ -93,6 +93,11 @@ class BufferedFile {
 
     }
 
+    async getSize() {
+        if (typeof this.file.getSize === 'function') return this.file.getSize()
+        return this.file.size
+    }
+
 }
 
 /**

@@ -8,6 +8,7 @@ import ContactRecord from './contactRecord.js';
 import LRU from './lru.js';
 import NormalizationVector from "./normalizationVector.js";
 import nvi from './nvi.js';
+import V10HicFile from './v10/hicFile.js';
 
 const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 const Short_MIN_VALUE = -32768;
@@ -88,8 +89,8 @@ class HicFile {
 
     async readHeaderAndFooter() {
 
-        // Read initial fields magic, version, and footer position
-        let data = await this.file.read(0, 16);
+        // Sniff the version before parsing any version-specific header fields.
+        let data = await this.file.read(0, 8);
         if (!data || data.byteLength === 0) {
             throw Error("File content is empty");
         }
@@ -99,6 +100,20 @@ class HicFile {
         if (this.version < 5) {
             throw Error("Unsupported hic version: " + this.version);
         }
+        if (this.version === 10) {
+            if (!this.v10) this.v10 = new V10HicFile({...this.config, file: this.file});
+            await this.v10.init();
+            this._syncV10Properties();
+            return this;
+        }
+        if (this.version > 10) {
+            throw Error("Unsupported hic version: " + this.version);
+        }
+
+        data = await this.file.read(0, 16);
+        binaryParser = new BinaryParser(new DataView(data));
+        this.magic = binaryParser.getString();
+        this.version = binaryParser.getInt();
         this.footerPosition = binaryParser.getLong();
 
         // Read footer and determine file position for body section (i.e. end of header)
@@ -197,7 +212,32 @@ class HicFile {
 
     }
 
+    _syncV10Properties() {
+        const source = this.v10;
+        for (const key of [
+            'magic', 'version', 'genomeId', 'attributes', 'attributeList', 'chromosomes',
+            'chromosomeIndexMap', 'chrAliasTable', 'wholeGenomeChromosome', 'wholeGenomeResolution', 'bpResolutions',
+            'fragResolutions', 'normalizationTypes', 'masterIndex', 'meta'
+        ]) {
+            this[key] = source[key];
+        }
+        this.normVectorIndexPosition = source.normLocator.position;
+        this.normVectorIndexSize = source.normLocator.length;
+        this.config.nvi = source.config.nvi;
+    }
+
     async readFooter() {
+
+        if (this.version === undefined) {
+            await this.init();
+            return this.version === 10 ? this.v10 : this;
+        }
+        if (this.version === 10) {
+            if (!this.v10) this.v10 = new V10HicFile({...this.config, file: this.file});
+            await this.v10.init();
+            this._syncV10Properties();
+            return this.v10.readFooter();
+        }
 
 
         const skip = this.version < 9 ? 8 : 12;
@@ -279,6 +319,8 @@ class HicFile {
     }
 
     async getMatrix(chrIdx1, chrIdx2) {
+        await this.init();
+        if (this.version === 10) return this.v10.getMatrix(chrIdx1, chrIdx2);
         const key = Matrix.getKey(chrIdx1, chrIdx2);
         if (this.matrixCache.has(key)) {
             return this.matrixCache.get(key);
@@ -292,6 +334,7 @@ class HicFile {
     async readMatrix(chrIdx1, chrIdx2) {
 
         await this.init();
+        if (this.version === 10) return this.v10.getMatrix(chrIdx1, chrIdx2);
 
         if (chrIdx1 > chrIdx2) {
             const tmp = chrIdx1;
@@ -313,9 +356,20 @@ class HicFile {
 
     }
 
-    async getContactRecords(normalization, region1, region2, units, binsize, allRecords = false) {
+    async getContactRecords(normalization, region1, region2, units, binsize, allRecords = false,
+                            matrixType = 'observed') {
 
         await this.init();
+        if (typeof allRecords === 'string') {
+            matrixType = allRecords;
+            allRecords = false;
+        }
+        if (this.version === 10) {
+            return this.v10.getContactRecords(normalization, region1, region2, units, binsize, matrixType);
+        }
+        if (matrixType !== 'observed') {
+            throw new Error(`${matrixType} contact queries are currently available only for .hic v10`);
+        }
 
         const idx1 = this.chromosomeIndexMap[this.getFileChrName(region1.chr)];
         const idx2 = this.chromosomeIndexMap[this.getFileChrName(region2.chr)];
@@ -388,6 +442,7 @@ class HicFile {
         const blockKey = (blockNumber, zd) => `${zd.getKey()}_${blockNumber}`;
 
         await this.init();
+        if (this.version === 10) return this.v10.getBlocks(region1, region2, unit, binSize);
         const chr1 = this.getFileChrName(region1.chr);
         const chr2 = this.getFileChrName(region2.chr);
         const idx1 = this.chromosomeIndexMap[chr1];
@@ -438,6 +493,8 @@ class HicFile {
     }
 
     async readBlock(blockNumber, zd) {
+
+        if (this.version === 10) return this.v10.readBlock(blockNumber, zd);
 
         const idx = await zd.blockIndex.getBlockIndexEntry(blockNumber);
 
@@ -527,6 +584,7 @@ class HicFile {
 
     async hasNormalizationVector(type, chr, unit, binSize) {
         await this.init();
+        if (this.version === 10) return this.v10.hasNormalizationVector(type, chr, unit, binSize);
         let chrIdx;
         if (Number.isInteger(chr)) {
             chrIdx = chr;
@@ -540,6 +598,11 @@ class HicFile {
     }
 
     async isNormalizationValueAvailableAtResolution(normalization, chr, unit, resolution) {
+
+        await this.init();
+        if (this.version === 10) {
+            return this.v10.isNormalizationValueAvailableAtResolution(normalization, chr, unit, resolution);
+        }
 
         let chromosomeIndex;
         if (Number.isInteger(chr)) {
@@ -562,6 +625,7 @@ class HicFile {
     async getNormalizationVector(type, chr, unit, binSize) {
 
         await this.init();
+        if (this.version === 10) return this.v10.getNormalizationVector(type, chr, unit, binSize);
 
         let chrIdx;
         if (Number.isInteger(chr)) {
@@ -615,7 +679,27 @@ class HicFile {
 
     }
 
+    async getExpectedValueVector(type, chr, unit, binSize) {
+        await this.init();
+        if (this.version === 10) return this.v10.getExpectedValueVector(type, chr, unit, binSize);
+        return undefined;
+    }
+
+    async getExpectedValues(type, chr, unit, binSize, start = 0, end) {
+        await this.init();
+        if (this.version === 10) return this.v10.getExpectedValues(type, chr, unit, binSize, start, end);
+        return undefined;
+    }
+
+    async hasExpectedValues(type, chr, unit, binSize) {
+        await this.init();
+        return this.version === 10 && this.v10.hasExpectedValues(type, chr, unit, binSize);
+    }
+
     async getNormVectorIndex() {
+
+        await this.init();
+        if (this.version === 10) return this.v10.getNormVectorIndex();
 
         if (this.version < 6) {
             return undefined;
@@ -662,6 +746,8 @@ class HicFile {
     }
 
     async getNormalizationOptions() {
+        await this.init();
+        if (this.version === 10) return this.v10.getNormalizationOptions();
         // Normalization options are computed as a side effect of loading the index.  A bit
         // ugly but alternatives are worse.
         await this.getNormVectorIndex();

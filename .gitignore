@@ -16,6 +16,7 @@ lib-cov
 
 # Coverage directory used by tools like istanbul
 coverage
+.vitest/
 
 # nyc test coverage
 .nyc_output
@@ -57,9 +58,13 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
+.env.*
+!.env.example
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
+.vite/
+.parcel-cache/
 
 # next.js build output
 .next
@@ -79,8 +84,11 @@ typings/
 # DynamoDB Local files
 .dynamodb/
 /.idea/
+.vscode/
 *.iml
-/node_modules/
 /test/readMatrix.js
-/node_modules
 .DS_Store
+*.swp
+*.swo
+*.tmp
+*.temp
