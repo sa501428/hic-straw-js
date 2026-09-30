@@ -3978,7 +3978,7 @@ var ce = class {
 				});
 			}
 		}
-		if (this._validateResolutionPolicy(), this.bpResolutions = this.resolutionRecords[I].map((e) => e.binSize), this.fragResolutions = this.resolutionRecords[L].map((e) => e.binSize), this.fragmentSiteCounts = Array(n).fill(0), this.fragResolutions.length) for (let t = 0; t < n; t++) {
+		if (this.bpResolutions = this.resolutionRecords[I].map((e) => e.binSize), this.fragResolutions = this.resolutionRecords[L].map((e) => e.binSize), this.fragmentSiteCounts = Array(n).fill(0), this.fragResolutions.length) for (let t = 0; t < n; t++) {
 			let n = e.u32();
 			T(n <= e.available / 8, "fragment-site count is out of bounds");
 			let r = 0;
@@ -3996,25 +3996,6 @@ var ce = class {
 		}
 		this.normalizationTypes = ["NONE", ...this.normalizationNames];
 		for (let e = 0; e < 2; e++) for (let t = 0; t < this.resolutionRecords[e].length; t++) for (let r = 0; r < n; r++) T(this._binCount(r, e, t) <= 4294967295, "chromosome bin count exceeds uint32");
-	}
-	_validateResolutionPolicy() {
-		let e = new Map([
-			[2, 1],
-			[5, 1],
-			[20, 10],
-			[50, 10],
-			[200, 100],
-			[500, 100],
-			[2e3, 1e3]
-		]), t = this.resolutionRecords[I];
-		for (let n = 0; n < t.length; n++) {
-			let r = t[n];
-			if (e.has(r.binSize)) {
-				let n = e.get(r.binSize), i = t.findIndex((e) => e.binSize === n);
-				T(i >= 0 && r.storageMode === z && r.sourceResolutionIndex === i && t[i].storageMode === R, `mandatory ${r.binSize} bp derivation policy is not satisfied`);
-			}
-			T(r.binSize !== 5e5 || r.storageMode === R, "500 kb resolution must be materialized");
-		}
 	}
 	_binCount(e, t, n) {
 		let r = t === L ? this.fragmentSiteCounts[e] + 1 : this.chromosomes[e].size, i = this.resolutionRecords[t][n].binSize;

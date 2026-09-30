@@ -90,7 +90,7 @@ function resolution(writer, binSize, mode, source) {
 }
 
 function descriptor({derived, resolutionIndex, binSize, sum, indexPosition, indexLength, score = false,
-    unit = 0, grid = 1}) {
+    unit = 0, grid = 1, blockColumnCount = derived ? 1 : 2}) {
     const writer = new Writer()
     writer.u8(unit).u8(derived ? 1 : 0).u8(1).u8(score ? 1 : 0)
         .u32(resolutionIndex).u32(binSize).u32(derived ? 0 : 0xffffffff)
@@ -98,7 +98,7 @@ function descriptor({derived, resolutionIndex, binSize, sum, indexPosition, inde
     if (score) writer.f64(sum)
     else writer.u64(sum)
     writer.u64(3)
-        .u32(0x7fc00000).u32(0x7fc00000).u32(4).u32(derived ? 1 : 2)
+        .u32(0x7fc00000).u32(0x7fc00000).u32(4).u32(blockColumnCount)
         .u64(derived ? 0 : indexPosition).u64(derived ? 0 : indexLength)
         .u32(derived ? 0 : 1).u32(0)
     if (writer.length !== 76) throw new Error(`descriptor length ${writer.length}`)
@@ -131,13 +131,14 @@ function vectorChunk(values, transform = 0) {
 }
 
 function createV10Fixture({representation = 0, mode = 2, counts = [1n, 1n, 5n], transform = 0,
-    oldIndex = false, score = false, frag = false, trans = false, expected = false} = {}) {
+    oldIndex = false, score = false, frag = false, trans = false, expected = false,
+    targetMaterialized = false, targetBinSize = 20} = {}) {
     const variable = new Writer()
     variable.cstr('test').u32(2).cstr('duplicate').cstr('one').cstr('duplicate').cstr('two')
         .u32(2).cstr('chrA').u64(80).cstr('chrB').u64(70)
         .u32(2)
     resolution(variable, 10, 0, 0xffffffff)
-    resolution(variable, 20, 1, 0)
+    resolution(variable, targetBinSize, targetMaterialized ? 0 : 1, targetMaterialized ? 0xffffffff : 0)
     variable.u32(frag ? 1 : 0)
     if (frag) {
         resolution(variable, 1, 0, 0xffffffff)
@@ -169,15 +170,20 @@ function createV10Fixture({representation = 0, mode = 2, counts = [1n, 1n, 5n], 
     const descriptors = new Writer()
         .append(descriptor({derived: false, resolutionIndex: 0, binSize: 10, sum,
             indexPosition, indexLength: index.length, score, grid: trans ? 0 : 1}))
-        .append(descriptor({derived: true, resolutionIndex: 1, binSize: 20, sum,
-            indexPosition: 0, indexLength: 0, score, grid: trans ? 0 : 1}))
+        .append(descriptor({derived: !targetMaterialized, resolutionIndex: 1, binSize: targetBinSize, sum,
+            indexPosition: targetMaterialized ? indexPosition : 0,
+            indexLength: targetMaterialized ? index.length : 0, score, grid: trans ? 0 : 1,
+            blockColumnCount: 1}))
     if (frag) descriptors.append(descriptor({derived: false, resolutionIndex: 0, binSize: 1, sum,
         indexPosition, indexLength: index.length, score, unit: 1, grid: trans ? 0 : 1}))
     file.bytes.set(descriptors.bytes, matrixPosition + 24)
 
+    const binSizes = [10, targetBinSize]
+    const vectorCounts = binSizes.map(binSize => Math.ceil(80 / binSize))
     const chunks = []
-    for (const value of [2, 4]) {
-        const count = value === 2 ? 8 : 4
+    for (let ri = 0; ri < 2; ri++) {
+        const value = ri === 0 ? 2 : 4
+        const count = vectorCounts[ri]
         const chunk = vectorChunk(new Array(count).fill(value), transform)
         const position = file.length
         file.append(chunk)
@@ -186,7 +192,7 @@ function createV10Fixture({representation = 0, mode = 2, counts = [1n, 1n, 5n], 
     const normPosition = file.length
     const norm = new Writer().magic('NVI0').u32(1).u32(2).u32(0)
     chunks.forEach((chunk, ri) => {
-        norm.u32(72).u32(0).u32(0).u8(0).append(new Uint8Array(3)).u32(ri).u32(10 * (ri + 1))
+        norm.u32(72).u32(0).u32(0).u8(0).append(new Uint8Array(3)).u32(ri).u32(binSizes[ri])
             .u64(chunk.count).u32(65536).u32(1)
             .u64(0).u32(chunk.count).u8(transform).u8(1).u16(0).u64(chunk.position)
             .u32(chunk.stored).u32(chunk.count * 4)
@@ -200,7 +206,7 @@ function createV10Fixture({representation = 0, mode = 2, counts = [1n, 1n, 5n], 
     if (expected) {
         const rawExpectedChunks = []
         const normalizedExpectedChunks = []
-        for (const count of [8, 4]) {
+        for (const count of vectorCounts) {
             const rawChunk = vectorChunk(Array.from({length: count}, (_, i) => 10 * (i + 1)), transform)
             const rawPosition = file.length
             file.append(rawChunk)
@@ -213,7 +219,7 @@ function createV10Fixture({representation = 0, mode = 2, counts = [1n, 1n, 5n], 
         const appendExpectedEntry = (writer, chunk, ri, normalized) => {
             writer.u32(normalized ? 84 : 80)
             if (normalized) writer.u32(0)
-            writer.u8(0).append(new Uint8Array(3)).u32(ri).u32(10 * (ri + 1))
+            writer.u8(0).append(new Uint8Array(3)).u32(ri).u32(binSizes[ri])
                 .u64(chunk.count).u32(65536).u32(1).u32(1).u32(0)
                 .u32(0).f32(2)
                 .u64(0).u32(chunk.count).u8(transform).u8(1).u16(0).u64(chunk.position)

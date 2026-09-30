@@ -44,6 +44,11 @@ vectors, and materialized or exactly derived resolutions. The public query API i
 the same for legacy and v10 observed contacts; v10 additionally exposes expected
 vectors and expected/OE contact queries.
 
+The standard v10 resolution pyramid is a writer default, not a reader constraint.
+For every resolution, hic-straw follows the file's declared materialized/derived
+mode and direct materialized source, so files may use custom base resolutions and
+derivation patterns.
+
 V10 integer counts are decoded and derived with unsigned 64-bit precision. A raw
 count is returned as a JavaScript `number` when it is no greater than
 `Number.MAX_SAFE_INTEGER`, and as a `bigint` otherwise. Normalized contacts and

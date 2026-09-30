@@ -312,7 +312,6 @@ class V10HicFile {
                 list.push({binSize, storageMode, aggregation, sourceResolutionIndex})
             }
         }
-        this._validateResolutionPolicy()
         this.bpResolutions = this.resolutionRecords[BP].map(value => value.binSize)
         this.fragResolutions = this.resolutionRecords[FRAG].map(value => value.binSize)
 
@@ -349,23 +348,6 @@ class V10HicFile {
                     requireV10(this._binCount(chr, unit, ri) <= 0xffffffff, 'chromosome bin count exceeds uint32')
                 }
             }
-        }
-    }
-
-    _validateResolutionPolicy() {
-        const required = new Map([[2, 1], [5, 1], [20, 10], [50, 10], [200, 100], [500, 100], [2000, 1000]])
-        const bp = this.resolutionRecords[BP]
-        for (let i = 0; i < bp.length; i++) {
-            const resolution = bp[i]
-            if (required.has(resolution.binSize)) {
-                const sourceBin = required.get(resolution.binSize)
-                const sourceIndex = bp.findIndex(value => value.binSize === sourceBin)
-                requireV10(sourceIndex >= 0 && resolution.storageMode === DERIVED &&
-                    resolution.sourceResolutionIndex === sourceIndex && bp[sourceIndex].storageMode === MATERIALIZED,
-                    `mandatory ${resolution.binSize} bp derivation policy is not satisfied`)
-            }
-            requireV10(resolution.binSize !== 500000 || resolution.storageMode === MATERIALIZED,
-                '500 kb resolution must be materialized')
         }
     }
 

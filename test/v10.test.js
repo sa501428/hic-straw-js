@@ -45,6 +45,18 @@ describe('.hic v10', function () {
         assert.deepEqual(records.map(r => [r.bin1, r.bin2, r.counts]), [[0, 0, 1], [0, 1, 1], [1, 1, 5]])
     })
 
+    it('derives an arbitrary target from its declared materialized source', async function () {
+        const records = await strawFor({targetBinSize: 30}).getContactRecords(
+            'NONE', {chr: 'chrA', start: 0, end: 80}, {chr: 'chrA', start: 0, end: 80}, 'BP', 30)
+        assert.deepEqual(records.map(r => [r.bin1, r.bin2, r.counts]), [[0, 0, 2], [1, 1, 5]])
+    })
+
+    it('honors a user-declared materialized resolution instead of enforcing the default pyramid', async function () {
+        const records = await strawFor({targetMaterialized: true}).getContactRecords(
+            'NONE', {chr: 'chrA', start: 0, end: 80}, {chr: 'chrA', start: 0, end: 80}, 'BP', 20)
+        assert.deepEqual(records.map(r => [r.bin1, r.bin2, r.counts]), [[0, 0, 1], [1, 2, 1], [3, 3, 5]])
+    })
+
     for (const representation of [0, 1, 2]) {
         it(`decodes score representation ${representation}`, async function () {
             const records = await strawFor({representation, mode: 2, counts: [1.25, 0.5, 2.75], score: true})
