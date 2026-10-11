@@ -42,3 +42,9 @@ be paired with `config.fileSize`.
 - Consumers serializing raw v10 contacts must handle `bigint` counts explicitly.
 - Raw and normalized expected vectors are available through the facade, and v10
   contact queries support observed, expected, and observed/expected values.
+  Cis queries use the matching expected vector. Trans queries use the raw
+  whole-matrix mean `(sumCountsOrScores / nBins1) / nBins2`, including for
+  normalized O/E, without requiring cis expected indexes. V10 bin counts include
+  partial BP bins and FRAG bins; derived resolutions use their target descriptor.
+  The denominator is independent of the query window. Zero and non-finite means
+  make expected/OE unavailable; no stored fields or file layout change.

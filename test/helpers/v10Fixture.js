@@ -181,18 +181,19 @@ function createV10Fixture({representation = 0, mode = 2, counts = [1n, 1n, 5n], 
     const binSizes = [10, targetBinSize]
     const vectorCounts = binSizes.map(binSize => Math.ceil(80 / binSize))
     const chunks = []
-    for (let ri = 0; ri < 2; ri++) {
-        const value = ri === 0 ? 2 : 4
-        const count = vectorCounts[ri]
+    for (let chr = 0; chr < (trans ? 2 : 1); chr++) for (let ri = 0; ri < 2; ri++) {
+        const value = (chr === 0 ? 2 : 3) * (ri === 0 ? 1 : 2)
+        const count = Math.ceil((chr === 0 ? 80 : 70) / binSizes[ri])
         const chunk = vectorChunk(new Array(count).fill(value), transform)
         const position = file.length
         file.append(chunk)
-        chunks.push({position, stored: chunk.length, count})
+        chunks.push({position, stored: chunk.length, count, chr, ri})
     }
     const normPosition = file.length
-    const norm = new Writer().magic('NVI0').u32(1).u32(2).u32(0)
-    chunks.forEach((chunk, ri) => {
-        norm.u32(72).u32(0).u32(0).u8(0).append(new Uint8Array(3)).u32(ri).u32(binSizes[ri])
+    const norm = new Writer().magic('NVI0').u32(1).u32(chunks.length).u32(0)
+    chunks.forEach(chunk => {
+        const ri = chunk.ri
+        norm.u32(72).u32(0).u32(chunk.chr).u8(0).append(new Uint8Array(3)).u32(ri).u32(binSizes[ri])
             .u64(chunk.count).u32(65536).u32(1)
             .u64(0).u32(chunk.count).u8(transform).u8(1).u16(0).u64(chunk.position)
             .u32(chunk.stored).u32(chunk.count * 4)

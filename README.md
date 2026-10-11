@@ -26,7 +26,7 @@ Arguments
 * region 2  {chr, start, end}
 * units -- `"BP"` for base pairs or `"FRAG"` for restriction-fragment coordinates
 * binSize -- size of each bin in base pair or fragment units.  Bins are square
-* matrixType -- optional `"observed"` (default), `"oe"`, or `"expected"`. The latter two currently require v10 and a cis query.
+* matrixType -- optional `"observed"` (default), `"oe"`, or `"expected"`. The latter two currently require v10 and support both cis and trans queries.
 
 #### getExpectedValues
 
@@ -44,6 +44,13 @@ vectors, and materialized or exactly derived resolutions. The public query API i
 the same for legacy and v10 observed contacts; v10 additionally exposes expected
 vectors and expected/OE contact queries.
 
+For v10 cis O/E, the reader uses the matching expected-value vector. Trans
+`expected` uses the raw whole-matrix mean `(sumCountsOrScores / nBins1) / nBins2`,
+and trans `oe` divides observed or normalized contacts by that scalar, as in v9.
+Normalization affects the numerator only; cis expected indexes are unnecessary
+for trans. The denominator uses full target-resolution V10 bin counts, including
+partial BP bins and FRAG bins, and never depends on the requested window.
+
 The standard v10 resolution pyramid is a writer default, not a reader constraint.
 For every resolution, hic-straw follows the file's declared materialized/derived
 mode and direct materialized source, so files may use custom base resolutions and
@@ -56,8 +63,8 @@ count is returned as a JavaScript `number` when it is no greater than
 
 The v10 API covers metadata, raw and normalized observed contacts, BP/FRAG
 units, normalization and expected-value vectors, and `oe`/`expected` contact
-queries. Expected-value queries use independently chunked `EVI0` or `NEVI`
-vectors and chromosome scale factors; they are defined only for cis matrices.
+queries. Cis expected-value queries use independently chunked `EVI0` or `NEVI`
+vectors and chromosome scale factors; trans queries use the matrix mean above.
 
 
 ## Configuration

@@ -4107,7 +4107,7 @@ var ce = class {
 				binSize: l
 			},
 			sumCounts: D,
-			averageCount: Number(f) / (this._binCount(t, i, c) * this._binCount(n, i, c))
+			averageCount: Number(f) / w / E
 		};
 		return O.getKey = () => `${this.chromosomes[t].name}_${this.chromosomes[n].name}_${K(i)}_${l}`, O.blockIndex.getBlockIndexEntry = async (e) => {
 			let t = await this._getBlockIndex(O), n = t[X(t, e)];
@@ -4293,7 +4293,7 @@ var ce = class {
 		let o = G(r), s = this.resolutionRecords[o].findIndex((e) => e.binSize === i);
 		T(s >= 0, `unavailable resolution ${i}`);
 		let c = this.getFileChrName(t.chr), l = this.getFileChrName(n.chr), u = this.chromosomeIndexMap[c], d = this.chromosomeIndexMap[l];
-		T(u !== void 0 && d !== void 0, "unknown chromosome in query"), a !== "observed" && T(u === d, "expected values are defined only for cis matrices");
+		T(u !== void 0 && d !== void 0, "unknown chromosome in query");
 		let f = u > d || u === d && t.start >= n.end;
 		f && ([u, d] = [d, u], [c, l] = [l, c], [t, n] = [n, t]);
 		let p = this._regionBins(t, u, o, s), m = this._regionBins(n, d, o, s);
@@ -4309,8 +4309,8 @@ var ce = class {
 		}
 		let S = y && a !== "expected" && b && x;
 		y && a === "oe" && T(S, `normalization ${e} is unavailable at ${i}`);
-		let w, E, D = 0;
-		if (a !== "observed") if (w = await this.getExpectedValueVector(e || "NONE", u, r, i), T(w, `expected values are unavailable for ${e || "NONE"} at ${i}`), v.length) {
+		let w, E, D = 0, O = u === d ? void 0 : g.averageCount;
+		if (a !== "observed" && u === d) if (w = await this.getExpectedValueVector(e || "NONE", u, r, i), T(w, `expected values are unavailable for ${e || "NONE"} at ${i}`), v.length) {
 			let e = 0;
 			D = 2 ** 53 - 1;
 			for (let t of v) {
@@ -4319,7 +4319,7 @@ var ce = class {
 			}
 			E = await w.getValues(D, e);
 		} else E = [];
-		let O = [];
+		let k = [];
 		for (let e of v) {
 			let t = e.bin1, n = e.bin2;
 			u === d && !(t >= p.start && t < p.end && n >= m.start && n < m.end) && ([t, n] = [n, t]);
@@ -4329,14 +4329,14 @@ var ce = class {
 				if (!Number.isFinite(e) || !Number.isFinite(i) || e === 0 || i === 0) continue;
 				r = Number(r) / (e * i);
 			} else e.valueType === B && r <= C && (r = Number(r));
-			if (w) {
-				let e = Math.abs(t - n), i = E[e - D];
-				if (!Number.isFinite(i) || i === 0) continue;
-				r = a === "oe" ? Number(r) / i : i;
+			if (a !== "observed") {
+				let e = w ? E[Math.abs(t - n) - D] : O;
+				if (!Number.isFinite(e) || e === 0) continue;
+				r = a === "oe" ? Number(r) / e : e;
 			}
-			f && ([t, n] = [n, t]), O.push(new _(t, n, r));
+			f && ([t, n] = [n, t]), k.push(new _(t, n, r));
 		}
-		return O;
+		return k;
 	}
 	async getBlocks(e, t, n, r) {
 		await this.init();

@@ -503,8 +503,7 @@ class V10HicFile {
             chr1: this.chromosomes[chr1], chr2: this.chromosomes[chr2], chr1Index: chr1, chr2Index: chr2,
             zoom: {index: resolutionIndex, unit: unitName(unit), binSize},
             sumCounts: sumValue,
-            averageCount: Number(sumCounts) /
-                (this._binCount(chr1, unit, resolutionIndex) * this._binCount(chr2, unit, resolutionIndex))
+            averageCount: (Number(sumCounts) / nBins1) / nBins2
         }
         descriptor.getKey = () => `${this.chromosomes[chr1].name}_${this.chromosomes[chr2].name}_${unitName(unit)}_${binSize}`
         descriptor.blockIndex.getBlockIndexEntry = async blockNumber => {
@@ -806,9 +805,6 @@ class V10HicFile {
         let chr1 = this.chromosomeIndexMap[chr1Name]
         let chr2 = this.chromosomeIndexMap[chr2Name]
         requireV10(chr1 !== undefined && chr2 !== undefined, 'unknown chromosome in query')
-        if (matrixType !== 'observed') {
-            requireV10(chr1 === chr2, 'expected values are defined only for cis matrices')
-        }
         const transpose = chr1 > chr2 || (chr1 === chr2 && region1.start >= region2.end)
         if (transpose) {
             [chr1, chr2] = [chr2, chr1]
@@ -842,7 +838,10 @@ class V10HicFile {
         let expectedVector
         let expectedValues
         let expectedBegin = 0
-        if (matrixType !== 'observed') {
+        // Trans expected is the raw whole-matrix mean, including zero cells,
+        // even when normalization is applied to the O/E numerator (V9 behavior).
+        const transExpected = chr1 !== chr2 ? zoom.averageCount : undefined
+        if (matrixType !== 'observed' && chr1 === chr2) {
             expectedVector = await this.getExpectedValueVector(normalization || 'NONE', chr1, units, binSize)
             requireV10(expectedVector, `expected values are unavailable for ${normalization || 'NONE'} at ${binSize}`)
             if (raw.length) {
@@ -871,9 +870,10 @@ class V10HicFile {
                 if (!Number.isFinite(a) || !Number.isFinite(b) || a === 0 || b === 0) continue
                 value = Number(value) / (a * b)
             } else if (record.valueType === COUNT_UINT && value <= MAX_SAFE_BIGINT) value = Number(value)
-            if (expectedVector) {
-                const distance = Math.abs(bin1 - bin2)
-                const expected = expectedValues[distance - expectedBegin]
+            if (matrixType !== 'observed') {
+                const expected = expectedVector
+                    ? expectedValues[Math.abs(bin1 - bin2) - expectedBegin]
+                    : transExpected
                 if (!Number.isFinite(expected) || expected === 0) continue
                 value = matrixType === 'oe' ? Number(value) / expected : expected
             }

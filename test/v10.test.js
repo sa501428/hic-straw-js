@@ -72,6 +72,49 @@ describe('.hic v10', function () {
         assert.deepEqual(records.map(r => [r.bin1, r.bin2]), [[0, 0], [2, 1], [3, 3]])
     })
 
+    for (const score of [false, true]) for (const binSize of [10, 20]) {
+        it(`computes trans expected/OE from the whole-matrix sum (${score ? 'scores' : 'counts'}, ${binSize})`, async function () {
+            const straw = strawFor({trans: true, score, counts: score ? [1, 1, 5] : [1n, 1n, 5n]})
+            const mean = 7 / (binSize === 10 ? 56 : 16)
+            const normProduct = binSize === 10 ? 6 : 24
+            // There are no expected indexes in this fixture; trans needs none.
+            for (const normalization of ['NONE', 'VC']) for (const matrixType of ['oe', 'expected']) {
+                for (const reverse of [false, true]) {
+                    const a = {chr: 'chrA', start: 0, end: 80}
+                    const b = {chr: 'chrB', start: 0, end: 70}
+                    const records = await straw.getContactRecords(normalization,
+                        reverse ? b : a, reverse ? a : b, 'BP', binSize, matrixType)
+                    const expected = matrixType === 'expected' ? [mean, mean, mean]
+                        : [1, 1, 5].map(v => v / mean / (normalization === 'VC' ? normProduct : 1))
+                    assert.equal(records.length, 3)
+                    records.forEach((record, i) => assert.closeTo(record.counts, expected[i], 1e-10))
+                    assert.deepEqual(records.map(r => [r.bin1, r.bin2]), binSize === 10
+                        ? (reverse ? [[0, 0], [2, 1], [3, 3]] : [[0, 0], [1, 2], [3, 3]])
+                        : (reverse ? [[0, 0], [1, 0], [1, 1]] : [[0, 0], [0, 1], [1, 1]]))
+                }
+            }
+            const window = await straw.getContactRecords('NONE',
+                {chr: 'chrB', start: 0, end: 10}, {chr: 'chrA', start: 0, end: 10}, 'BP', binSize, 'oe')
+            assert.equal(window.length, 1)
+            assert.closeTo(window[0].counts, 1 / mean, 1e-10)
+        })
+    }
+
+    it('makes trans O/E unavailable for zero or non-finite matrix means', async function () {
+        for (const counts of [[1, -1, 0], [1, Infinity, 5], [1, NaN, 5]]) {
+            const records = await strawFor({trans: true, score: true, counts}).getContactRecords(
+                'NONE', {chr: 'chrA', start: 0, end: 80}, {chr: 'chrB', start: 0, end: 70}, 'BP', 10, 'oe')
+            assert.isEmpty(records)
+        }
+    })
+
+    it('uses fragment bin counts for trans O/E', async function () {
+        const records = await strawFor({trans: true, frag: true}).getContactRecords(
+            'NONE', {chr: 'chrB', start: 0, end: 8}, {chr: 'chrA', start: 0, end: 8}, 'FRAG', 1, 'oe')
+        assert.equal(records.length, 3)
+        assert.closeTo(records[0].counts, 64 / 7, 1e-10)
+    })
+
     it('transposes a reversed cis window back to caller region order', async function () {
         const records = await strawFor().getContactRecords('NONE',
             {chr: 'chrA', start: 20, end: 30}, {chr: 'chrA', start: 10, end: 20}, 'BP', 10)
