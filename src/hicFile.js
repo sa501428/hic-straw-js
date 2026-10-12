@@ -216,7 +216,7 @@ class HicFile {
         const source = this.v10;
         for (const key of [
             'magic', 'version', 'genomeId', 'attributes', 'attributeList', 'chromosomes',
-            'chromosomeIndexMap', 'chrAliasTable', 'wholeGenomeChromosome', 'wholeGenomeResolution', 'bpResolutions',
+            'chromosomeIndexMap', 'chrAliasTable', 'allOverview', 'wholeGenomeChromosome', 'wholeGenomeResolution', 'bpResolutions',
             'fragResolutions', 'normalizationTypes', 'masterIndex', 'meta'
         ]) {
             this[key] = source[key];

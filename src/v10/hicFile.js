@@ -1,3 +1,4 @@
+import {allOverview} from './allOverview.js'
 import ContactRecord from '../contactRecord.js'
 import LRU from '../lru.js'
 import {MAX_SAFE_BIGINT, UINT64_MAX, V10Cursor, checkedAdd, checkedNumberAdd, floatFromBits, requireV10,
@@ -314,6 +315,8 @@ class V10HicFile {
         }
         this.bpResolutions = this.resolutionRecords[BP].map(value => value.binSize)
         this.fragResolutions = this.resolutionRecords[FRAG].map(value => value.binSize)
+        this.allOverview = allOverview(this.attributes, this.chromosomes, this.bpResolutions)
+        if (this.allOverview) this.wholeGenomeResolution = this.allOverview.effectiveResolution
 
         this.fragmentSiteCounts = new Array(chromosomeCount).fill(0)
         if (this.fragResolutions.length) {
@@ -401,6 +404,7 @@ class V10HicFile {
             resolutions: this.bpResolutions,
             fragResolutions: this.fragResolutions,
             attributes: this.attributes,
+            allOverview: this.allOverview,
             attributeList: this.attributeList
         }
     }
