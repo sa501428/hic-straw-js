@@ -33,3 +33,24 @@ describe('stored scaled All', () => {
         assert.isUndefined(allOverview({...attrs, 'hicAll.version': 'future'}, chromosomes, [1]))
     })
 })
+
+describe('V9-style kilobase All', () => {
+    it('keeps the kb span and exact sparse finest-resolution records', async () => {
+        const data = readFileSync(new URL('./data/kilobase-all.hic', import.meta.url))
+        const straw = new Straw({file: new MemoryFile(data)})
+        const meta = await straw.getMetaData()
+        const all = meta.allOverview
+        assert.equal(all.version, 2)
+        assert.equal(meta.chromosomes.find(c => c.name === 'All').size, 170)
+        assert.equal(all.finestResolution, 1)
+        assert.equal(all.storageStride, 17)
+        assert.equal(all.displayResolution, 17)
+        assert.equal(all.coordinateScale, 1000)
+        assert.equal(all.effectiveResolution, 17000)
+        assert.equal(all.binCount, 10)
+        assert.deepEqual(all.layout.map(c => [c.offset, c.size]), [[0, 95000], [95000, 75000]])
+        const records = await straw.getContactRecords('NONE', {chr: 'All', start: 0, end: 170}, {chr: 'All', start: 0, end: 170}, 'BP', 1)
+        assert.deepEqual(records.map(r => [r.bin1, r.bin2, r.counts]), [[0, 17, (1n << 53n) + 17n], [85, 153, 32]])
+        assert.throws(() => allOverview({...straw.hicFile.attributes, 'hicAll.storageStride': '20'}, meta.chromosomes, meta.resolutions), /inconsistent/)
+    })
+})

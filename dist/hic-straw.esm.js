@@ -1933,7 +1933,7 @@ var c = class {
 		let n = { ...this.config.headers };
 		n.Range = "bytes=" + e + "-" + (e + t - 1);
 		let r = this.url;
-		n["User-Agent"] = "IGV", this.config.oauthToken && (n.Authorization = `Bearer ${await s(this.config.oauthToken)}`);
+		n["User-Agent"] = "IGV", this.config.oauthToken && (n.Authorization = `Bearer ${await u(this.config.oauthToken)}`);
 		let i = typeof globalThis.fetch == "function" ? globalThis.fetch : globalThis.fetch?.default;
 		if (typeof i != "function") throw Error("No fetch implementation is available");
 		let a = await i(r, {
@@ -1945,19 +1945,25 @@ var c = class {
 		if (o >= 400) {
 			let e = Error(`${o} ${a.statusText || "error"} — ${r}`);
 			throw e.code = o, e.headers = a.headers, e.url = r, e;
-		} else {
-			let n = a.headers?.get?.("content-range");
-			if (n) {
-				let e = /\/([0-9]+)$/.exec(n);
-				e && (this.size = Number(e[1]));
-			} else if (o === 200) {
-				let e = a.headers?.get?.("content-length");
-				e && (this.size = Number(e));
-			}
-			let r = await a.arrayBuffer();
-			return o === 200 && r.byteLength !== t ? (this.size === void 0 && (this.size = r.byteLength), r.slice(e, e + t)) : r;
 		}
-		async function s(e) {
+		let s = async (e) => {
+			try {
+				await a.body?.cancel?.();
+			} catch {}
+			throw Error(e);
+		};
+		if (o !== 206) return s("HTTP server must support byte ranges (206)");
+		let c = a.headers?.get?.("content-range");
+		if (c) {
+			let n = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(c), r = n && Number(n[1]), i = n && Number(n[2]), a = n && Number(n[3]);
+			if (!n || !Number.isSafeInteger(a) || r !== e || i !== e + t - 1 || i >= a) return s("HTTP server returned the wrong byte range");
+			if (this.size !== void 0 && this.size !== a) return s("HTTP file size changed during reading");
+			this.size = a;
+		}
+		let l = await a.arrayBuffer();
+		if (l.byteLength !== t) throw Error("HTTP range length mismatch");
+		return l;
+		async function u(e) {
 			return typeof e == "function" ? await Promise.resolve(e()) : e;
 		}
 	}
@@ -3659,32 +3665,65 @@ var m = class e {
 //#endregion
 //#region src/v10/allOverview.js
 function S(e, t, n) {
-	if (e["hicAll.version"] !== "1") return;
-	let r = t.find((e) => e.name.toLowerCase() === "all"), i = (t) => {
+	let r = Number(e["hicAll.version"]);
+	if (r !== 1 && r !== 2) return;
+	let i = t.find((e) => e.name.toLowerCase() === "all"), a = (t) => {
 		let n = e[`hicAll.${t}`], r = Number(n);
 		if (!/^\d+$/.test(n || "") || !Number.isSafeInteger(r) || r <= 0) throw Error(`V10: invalid scaled All ${t}`);
 		return r;
-	}, a = i("sourceResolution"), o = i("groupFactor"), s = i("finestResolution"), c = i("binCount"), l = t.filter((e) => e !== r), u = (e["hicAll.chromosomeBins"] || "").split(",").map(Number), d = a * o;
-	if (!r || s !== n[0] || r.size !== c * s || !Number.isSafeInteger(d) || u.length !== l.length || u.some((e, t) => !Number.isSafeInteger(e) || e !== Math.ceil(l[t].size / a))) throw Error("V10: inconsistent scaled All layout");
-	let f = 0, p = l.map((e, t) => {
+	}, o = a("sourceResolution"), s = a("groupFactor"), c = a("finestResolution"), l = a("binCount"), u = t.filter((e) => e !== i), d = (e["hicAll.chromosomeBins"] || "").split(",").map(Number);
+	if (r === 2) {
+		let e = a("coordinateScale"), t = a("storageStride"), f = c * t, p = f * e, m = 0, h = u.map((e) => {
+			let t = {
+				index: e.index,
+				name: e.name,
+				offset: m,
+				size: e.size
+			};
+			return m += e.size, t;
+		});
+		if (!i || c !== n[0] || !Number.isSafeInteger(m) || !Number.isSafeInteger(p) || i.size !== Math.max(1, Math.floor(m / e)) || l !== Math.ceil(i.size / f) || d.length !== u.length || d.some((e, t) => e !== Math.ceil(u[t].size / o))) throw Error("V10: inconsistent kilobase All layout");
+		return {
+			version: r,
+			chromosomeIndex: i.index,
+			sourceResolution: o,
+			groupFactor: s,
+			finestResolution: c,
+			binCount: l,
+			coordinateScale: e,
+			storageStride: t,
+			displayResolution: f,
+			effectiveResolution: p,
+			layout: h,
+			syntheticLength: i.size,
+			displayLength: l * p
+		};
+	}
+	let f = o * s;
+	if (!i || c !== n[0] || i.size !== l * c || !Number.isSafeInteger(f) || d.length !== u.length || d.some((e, t) => !Number.isSafeInteger(e) || e !== Math.ceil(u[t].size / o))) throw Error("V10: inconsistent scaled All layout");
+	let p = 0, m = u.map((e, t) => {
 		let n = {
 			index: e.index,
 			name: e.name,
-			offset: f,
-			size: u[t] * a
+			offset: p,
+			size: d[t] * o
 		};
-		return f += n.size, n;
+		return p += n.size, n;
 	});
-	if (Math.ceil(f / d) !== c) throw Error("V10: inconsistent scaled All bin count");
+	if (Math.ceil(p / f) !== l) throw Error("V10: inconsistent scaled All bin count");
 	return {
-		chromosomeIndex: r.index,
-		sourceResolution: a,
-		groupFactor: o,
-		finestResolution: s,
-		binCount: c,
-		effectiveResolution: d,
-		layout: p,
-		displayLength: c * d
+		version: r,
+		coordinateScale: void 0,
+		storageStride: 1,
+		displayResolution: c,
+		chromosomeIndex: i.index,
+		sourceResolution: o,
+		groupFactor: s,
+		finestResolution: c,
+		binCount: l,
+		effectiveResolution: f,
+		layout: m,
+		displayLength: l * f
 	};
 }
 //#endregion
@@ -4343,7 +4382,7 @@ var ue = class {
 			t && n && (b = await t.getValues(p.start, p.end), x = await n.getValues(m.start, m.end));
 		}
 		let S = y && a !== "expected" && b && x;
-		y && a === "oe" && E(S, `normalization ${e} is unavailable at ${i}`);
+		y && a !== "expected" && E(S, `normalization ${e} is unavailable at ${i}`);
 		let C, T, D = 0, O = u === d ? void 0 : g.averageCount;
 		if (a !== "observed" && u === d) if (C = await this.getExpectedValueVector(e || "NONE", u, r, i), E(C, `expected values are unavailable for ${e || "NONE"} at ${i}`), v.length) {
 			let e = 0;

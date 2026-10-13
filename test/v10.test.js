@@ -1,4 +1,5 @@
 import {assert} from 'chai'
+import {rejects as assertRejects} from 'node:assert/strict'
 import {describe, it, vi} from 'vitest'
 import HicFile from '../src/hicFile.js'
 import Straw from '../src/straw.js'
@@ -9,6 +10,19 @@ function strawFor(options) {
 }
 
 describe('.hic v10', function () {
+    it('rejects unavailable normalization instead of returning raw observations', async function () {
+        const bytes = createV10Fixture()
+        const view = new DataView(bytes.buffer)
+        view.setBigUint64(32, 0n, true)
+        view.setBigUint64(40, 0n, true)
+        const straw = new Straw({file: new MemoryFile(bytes)})
+        const region = {chr: 'chrA', start: 0, end: 80}
+        for (const normalization of ['VC', 'MISSING']) {
+            await assertRejects(straw.getContactRecords(normalization, region, region, 'BP', 10), /unavailable/)
+        }
+        assert.lengthOf(await straw.getContactRecords('NONE', region, region, 'BP', 10), 3)
+    })
+
     it('reads metadata and the numeric matrix directory', async function () {
         const straw = strawFor()
         const meta = await straw.getMetaData()

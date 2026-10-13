@@ -46,23 +46,33 @@ class RemoteFile {
             err.headers = response.headers   // Headers instance, filtered by CORS in the browser
             err.url = url                    // the url actually fetched, after mapping
             throw err
-        } else {
-            const contentRange = response.headers?.get?.('content-range')
-            if (contentRange) {
-                const match = /\/([0-9]+)$/.exec(contentRange)
-                if (match) this.size = Number(match[1])
-            } else if (status === 200) {
-                const contentLength = response.headers?.get?.('content-length')
-                if (contentLength) this.size = Number(contentLength)
-            }
-
-            const result = await response.arrayBuffer()
-            if (status === 200 && result.byteLength !== length) {
-                if (this.size === undefined) this.size = result.byteLength
-                return result.slice(position, position + length)
-            }
-            return result
         }
+        // Range reads must never turn into unbounded whole-file downloads.
+        const reject = async message => {
+            try { await response.body?.cancel?.() } catch (_) { /* best effort */ }
+            throw new Error(message)
+        }
+        if (status !== 206) return reject('HTTP server must support byte ranges (206)')
+        const contentRange = response.headers?.get?.('content-range')
+        if (contentRange) {
+            const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(contentRange)
+            const start = match && Number(match[1])
+            const end = match && Number(match[2])
+            const total = match && Number(match[3])
+            if (!match || !Number.isSafeInteger(total) || start !== position ||
+                end !== position + length - 1 || end >= total) {
+                return reject('HTTP server returned the wrong byte range')
+            }
+            if (this.size !== undefined && this.size !== total) {
+                return reject('HTTP file size changed during reading')
+            }
+            this.size = total
+        }
+        // Content-Range may be hidden by CORS. In that case require 206 and an
+        // exact body length; getSize() obtains the total via HEAD.
+        const result = await response.arrayBuffer()
+        if (result.byteLength !== length) throw new Error('HTTP range length mismatch')
+        return result
 
         /**
          * token can be a string, a function that returns a string, or a function that returns a Promise for a string

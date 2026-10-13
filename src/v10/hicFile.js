@@ -836,7 +836,7 @@ class V10HicFile {
             }
         }
         const applyNormalization = normalized && matrixType !== 'expected' && vector1 && vector2
-        if (normalized && matrixType === 'oe') {
+        if (normalized && matrixType !== 'expected') {
             requireV10(applyNormalization, `normalization ${normalization} is unavailable at ${binSize}`)
         }
         let expectedVector

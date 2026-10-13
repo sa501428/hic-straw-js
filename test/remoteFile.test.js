@@ -1,4 +1,5 @@
 import {assert} from 'chai'
+import {rejects as assertRejects} from 'node:assert/strict'
 import {describe, it, afterEach, vi} from 'vitest'
 import RemoteFile, {defaultMapUrl} from '../src/io/remoteFile.js'
 
@@ -77,9 +78,36 @@ describe('RemoteFile read', function () {
         vi.unstubAllGlobals()
     })
 
+    it('rejects a wrong range before consuming its body', async function () {
+        const body = vi.fn(async () => new ArrayBuffer(4))
+        const cancel = vi.fn(async () => {})
+        stubFetch({status: 206, headers: new Headers({'Content-Range': 'bytes 0-3/100'}),
+            arrayBuffer: body, body: {cancel}})
+        await assertRejects(new RemoteFile({url: 'https://example.org/map.hic'}).read(50, 4), /wrong byte range/)
+        assert.equal(body.mock.calls.length, 0)
+        assert.equal(cancel.mock.calls.length, 1)
+    })
+
+    it('rejects ignored Range without downloading the whole file', async function () {
+        const body = vi.fn(async () => new ArrayBuffer(1000000))
+        stubFetch({status: 200, headers: new Headers({'Content-Length': '1000000'}), arrayBuffer: body})
+        await assertRejects(new RemoteFile({url: 'https://example.org/map.hic'}).read(0, 88), /byte ranges/)
+        assert.equal(body.mock.calls.length, 0)
+    })
+
+    it('validates the exact returned range and body length', async function () {
+        const file = new RemoteFile({url: 'https://example.org/map.hic'})
+        stubFetch({status: 206, headers: new Headers({'Content-Range': 'bytes 50-53/100'}),
+            arrayBuffer: async () => new ArrayBuffer(4)})
+        assert.equal((await file.read(50, 4)).byteLength, 4)
+        assert.equal(await file.getSize(), 100)
+        stubFetch({status: 206, arrayBuffer: async () => new ArrayBuffer(3)})
+        await assertRejects(file.read(50, 4), /length mismatch/)
+    })
+
     it('requests the byte range it was asked for, from the mapped url', async function () {
         const capture = {}
-        stubFetch({status: 200, arrayBuffer: async () => new ArrayBuffer(128)}, capture)
+        stubFetch({status: 206, arrayBuffer: async () => new ArrayBuffer(128)}, capture)
 
         const file = new RemoteFile({
             url: 'https://example.org/matrix.hic',
@@ -93,7 +121,7 @@ describe('RemoteFile read', function () {
 
     it('does not mutate the headers object it was configured with', async function () {
         const headers = {'Authorization': 'Bearer xyz'}
-        stubFetch({status: 200, arrayBuffer: async () => new ArrayBuffer(16)})
+        stubFetch({status: 206, arrayBuffer: async () => new ArrayBuffer(16)})
 
         const file = new RemoteFile({url: 'https://example.org/matrix.hic', headers})
         await file.read(0, 16)

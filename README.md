@@ -448,3 +448,14 @@ synthetic resolution. This convention changes no binary fields or file version.
 including physical offsets and effective resolution. Ordinary queries keep
 synthetic coordinates and exact integer counts. Unknown convention versions
 retain ordinary decoding without version-one display interpretation.
+
+The All metadata API also supports convention **version 2**, which stores the
+V9-style unpadded genome length in kilobases and sparse overview contacts at the
+finest advertised BP resolution. `storageStride` / `storage_stride` relates raw
+finest bin indices to compact display bins; `displayResolution` /
+`display_resolution` is the virtual overview interval, and `coordinateScale` /
+`coordinate_scale` is normally 1000. Version-one compact All remains supported.
+Use the updated native `hic_v10 add-all --rebuild-all INPUT OUTPUT` to migrate
+existing All from its real-chromosome data. This introduces no `.hic` binary
+format change. `kilobase-all.hic` regression fixtures cover unpadded boundaries,
+sparse coordinates, exact uint64 totals and version-one compatibility.
