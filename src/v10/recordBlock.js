@@ -42,8 +42,8 @@ class RecordBlock {
 
     countAt(i) { return this.wideCounts ? this.values[i] : BigInt(this.values[i]) }
 
-    recordAt(i) {
-        return {bin1: this.x[i], bin2: this.y[i], value: this.valueType === 0 ? this.countAt(i) : this.values[i], valueType: this.valueType}
+    recordAt(i, nativeCounts = false) {
+        return {bin1: this.x[i], bin2: this.y[i], value: this.valueType === 0 && !nativeCounts ? this.countAt(i) : this.values[i], valueType: this.valueType}
     }
 
     *[Symbol.iterator]() {

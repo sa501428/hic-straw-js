@@ -67,15 +67,34 @@ describe('V10 bounded caches and aggregation reuse', () => {
         }
     })
 
-    it('merges a target bin that straddles two physical source blocks exactly', async () => {
-        const wire = new V10HicFile({file: new MemoryFile(createV10Fixture({trans: true, targetBinSize: 30}))})
-        const matrix = await wire.getMatrix(0, 1)
-        const source = matrix.getZoomData(10, 'BP'), target = matrix.getZoomData(30, 'BP')
-        Object.assign(source, {blockBinCount: 2, blockColumnCount: 4, occupiedCellCount: 2n, sumCounts: 5})
-        const entries = [0, 1].map(n => ({blockNumber: n, blockPosition: 1000 + n, storedByteLength: 100}))
-        vi.spyOn(wire, '_getBlockIndex').mockResolvedValue(entries)
-        vi.spyOn(wire, '_readBlock').mockImplementation(async entry => entry.blockNumber === 0 ? packed([[1, 0, 2n]]) : packed([[2, 0, 3n]]))
-        expect(await wire._raw(matrix, target, 0, 1, 0, 1)).toEqual([{bin1: 0, bin2: 0, value: 5n, valueType: 0}])
+    it('merges straddling source blocks and promotes sums beyond safe integers exactly', async () => {
+        for (const counts of [[2n, 3n], [(1n << 52n) + 1n, (1n << 52n) + 1n]]) {
+            const wire = new V10HicFile({file: new MemoryFile(createV10Fixture({trans: true, targetBinSize: 30}))})
+            const matrix = await wire.getMatrix(0, 1)
+            const source = matrix.getZoomData(10, 'BP'), target = matrix.getZoomData(30, 'BP')
+            Object.assign(source, {blockBinCount: 2, blockColumnCount: 4, occupiedCellCount: 2n, sumCounts: counts[0] + counts[1]})
+            const entries = [0, 1].map(n => ({blockNumber: n, blockPosition: 1000 + n, storedByteLength: 100}))
+            vi.spyOn(wire, '_getBlockIndex').mockResolvedValue(entries)
+            vi.spyOn(wire, '_readBlock').mockImplementation(async entry => packed([[1 + entry.blockNumber, 0, counts[entry.blockNumber]]]))
+            expect([...await wire._raw(matrix, target, 0, 1, 0, 1)]).toEqual([{bin1: 0, bin2: 0, value: counts[0] + counts[1], valueType: 0}])
+        }
+    })
+
+    it('reuses exact raw regions across norms and O/E without reusing a clipped rectangle', async () => {
+        const bytes = createV10Fixture({expected: true})
+        const wire = new V10HicFile({file: new MemoryFile(bytes)})
+        const uncached = new V10HicFile({file: new MemoryFile(bytes), v10DerivedRegionCacheBytes: 0})
+        const aggregate = vi.spyOn(wire, '_rawUncached')
+        for (const [norm, type] of [['NONE', 'observed'], ['VC', 'observed'], ['VC', 'oe'], ['NONE', 'oe']]) {
+            const actual = await wire.getContactRecords(norm, region(), region(), 'BP', 20, type)
+            const expected = await uncached.getContactRecords(norm, region(), region(), 'BP', 20, type)
+            expect(triples(actual)).toEqual(triples(expected))
+        }
+        expect(aggregate).toHaveBeenCalledTimes(1)
+        const clipped = await wire.getContactRecords('NONE', region(0, 20), region(0, 20), 'BP', 20)
+        expect(clipped).toHaveLength(1)
+        expect(await wire.getContactRecords('NONE', region(), region(), 'BP', 20)).toHaveLength(3)
+        expect(aggregate).toHaveBeenCalledTimes(2)
     })
 
     it('keeps overflow checks in projected count accumulation', () => {

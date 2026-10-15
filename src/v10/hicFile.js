@@ -195,6 +195,8 @@ class V10HicFile {
         this.blockIndexCache = new Map()
         this.blockCache = new ByteCache(config.v10BlockCacheSize ?? 24, config.v10BlockCacheBytes ?? 256 * 1024 * 1024)
         this.derivedBlockCache = new ByteCache(config.v10DerivedBlockCacheSize ?? 24, config.v10DerivedBlockCacheBytes ?? 64 * 1024 * 1024)
+        this.derivedRegionCache = new ByteCache(config.v10DerivedRegionCacheSize ?? 8,
+            config.v10DerivedRegionCacheBytes ?? 32 * 1024 * 1024)
         this.vectorChunkCache = new ByteCache(config.v10VectorChunkCacheSize ?? 64,
             config.v10VectorChunkCacheBytes ?? 32 * 1024 * 1024)
         this.maxRecordBytes = config.v10MaxRecordBytes || 512 * 1024 * 1024
@@ -926,7 +928,7 @@ class V10HicFile {
                 for (const [begin, end] of rows) {
                     for (let i = Math.max(begin, previousEnd); i < end; i++) {
                         const x = visible.x[i], y = visible.y[i]
-                        if (inside(x * factor, y * factor)) callback(visible.recordAt(i), Boolean(projected))
+                        if (inside(x * factor, y * factor)) callback(visible.recordAt(i, true), Boolean(projected))
                     }
                     previousEnd = Math.max(previousEnd, end)
                 }
@@ -944,6 +946,24 @@ class V10HicFile {
     }
 
     async _raw(matrix, zoom, x0, x1, y0, y1) {
+        if (zoom.storageMode !== DERIVED || !this.derivedRegionCache.maxBytes || !this.derivedRegionCache.maxEntries) {
+            return this._rawUncached(matrix, zoom, x0, x1, y0, y1)
+        }
+        const key = `${matrix.chr1}_${matrix.chr2}_${zoom.unit}_${zoom.resolutionIndex}_${x0}_${x1}_${y0}_${y1}`
+        const cached = this.derivedRegionCache.get(key)
+        if (cached) return cached
+        return this._share(this.pendingMetadata, `region_${key}`, async () => {
+            const records = await this._rawUncached(matrix, zoom, x0, x1, y0, y1)
+            // A clipped region has its own key; never treat it as a whole block.
+            if (records.length * 16 > this.derivedRegionCache.maxBytes) return records
+            const packed = new RecordBlock(records.length, zoom.valueType)
+            for (const record of records) packed.push(record)
+            this.derivedRegionCache.set(key, packed)
+            return packed
+        })
+    }
+
+    async _rawUncached(matrix, zoom, x0, x1, y0, y1) {
         const result = []
         if (zoom.storageMode === MATERIALIZED) {
             await this._materialized(matrix, zoom, x0, x1, y0, y1, record => result.push(record))
@@ -969,8 +989,14 @@ class V10HicFile {
             if (zoom.valueType === COUNT_UINT) {
                 const targetKey = targetKeyFor(tx, ty)
                 const previous = sums.get(targetKey)
-                if (previous) previous.value = checkedAdd(previous.value, record.value, 'derived count')
-                else sums.set(targetKey, {bin1: tx, bin2: ty, value: record.value, valueType: COUNT_UINT})
+                if (previous) {
+                    // Packed counts already fit safe numbers unless the block
+                    // promoted to uint64. Keep addition native while exact;
+                    // promote before any sum can lose an integer bit.
+                    const a = previous.value, b = record.value
+                    previous.value = typeof a === 'number' && typeof b === 'number' && Number.isSafeInteger(a + b)
+                        ? a + b : checkedAdd(BigInt(a), BigInt(b), 'derived count')
+                } else sums.set(targetKey, {bin1: tx, bin2: ty, value: record.value, valueType: COUNT_UINT})
             } else scores.push(record)
         }, zoom)
         if (zoom.valueType === SCORE_FLOAT32) {
@@ -1047,6 +1073,7 @@ class V10HicFile {
         let expectedVector
         let expectedValues
         let expectedBegin = 0
+        const packedRaw = raw instanceof RecordBlock
         // Trans expected is the raw whole-matrix mean, including zero cells,
         // even when normalization is applied to the O/E numerator (V9 behavior).
         const transExpected = chr1 !== chr2 ? zoom.averageCount : undefined
@@ -1056,8 +1083,8 @@ class V10HicFile {
             if (raw.length) {
                 let expectedEnd = 0
                 expectedBegin = Number.MAX_SAFE_INTEGER
-                for (const record of raw) {
-                    const distance = Math.abs(record.bin1 - record.bin2)
+                for (let i = 0; i < raw.length; i++) {
+                    const distance = packedRaw ? Math.abs(raw.x[i] - raw.y[i]) : Math.abs(raw[i].bin1 - raw[i].bin2)
                     expectedBegin = Math.min(expectedBegin, distance)
                     expectedEnd = Math.max(expectedEnd, distance + 1)
                 }
@@ -1065,7 +1092,8 @@ class V10HicFile {
             } else expectedValues = []
         }
         const records = []
-        for (const record of raw) {
+        for (let i = 0; i < raw.length; i++) {
+            const record = packedRaw ? raw.recordAt(i, true) : raw[i]
             let bin1 = record.bin1
             let bin2 = record.bin2
             if (chr1 === chr2 && !(bin1 >= first.start && bin1 < first.end &&
