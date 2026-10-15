@@ -1,4 +1,5 @@
 import {allOverview} from './allOverview.js'
+import {RecordBlock, ByteCache} from './recordBlock.js'
 import ContactRecord from '../contactRecord.js'
 import LRU from '../lru.js'
 import {MAX_SAFE_BIGINT, UINT64_MAX, V10Cursor, checkedAdd, checkedNumberAdd, floatFromBits, requireV10,
@@ -189,9 +190,56 @@ class V10HicFile {
         this.magic = 'HIC'
         this.matrixCache = new Map()
         this.blockIndexCache = new Map()
-        this.blockCache = new LRU(config.v10BlockCacheSize || 24)
+        this.blockCache = new ByteCache(config.v10BlockCacheSize ?? 24, config.v10BlockCacheBytes ?? 256 * 1024 * 1024)
+        this.derivedBlockCache = new ByteCache(config.v10DerivedBlockCacheSize ?? 24, config.v10DerivedBlockCacheBytes ?? 64 * 1024 * 1024)
         this.vectorChunkCache = new LRU(config.v10VectorChunkCacheSize || 12)
         this.maxRecordBytes = config.v10MaxRecordBytes || 512 * 1024 * 1024
+        this.pendingBlocks = new Map()
+        this.pendingMetadata = new Map()
+        this.blockLoadConcurrency = config.v10ReadConcurrency ?? 2
+        requireV10(Number.isInteger(this.blockLoadConcurrency) && this.blockLoadConcurrency >= 1 && this.blockLoadConcurrency <= 8,
+            'block read concurrency must be an integer from 1 to 8')
+        this.activeBlockLoads = 0
+        this.activeBlockBytes = 0
+        this.blockReadAheadBytes = config.v10ReadAheadBytes ?? 8 * 1024 * 1024
+        requireV10(Number.isSafeInteger(this.blockReadAheadBytes) && this.blockReadAheadBytes > 0,
+            'block read-ahead byte budget must be a positive safe integer')
+        this.blockLoadQueue = []
+    }
+
+    _share(pending, key, loader) {
+        if (!pending.has(key)) {
+            const promise = Promise.resolve().then(loader).finally(() => pending.delete(key))
+            pending.set(key, promise)
+        }
+        return pending.get(key)
+    }
+
+    _drainBlockLoads() {
+        while (this.blockLoadQueue.length && this.activeBlockLoads < this.blockLoadConcurrency) {
+            const next = this.blockLoadQueue[0]
+            // A single large block still needs to load. Never overlap it with
+            // another read when it exceeds the byte budget on its own.
+            if (this.activeBlockLoads && this.activeBlockBytes + next.bytes > this.blockReadAheadBytes) break
+            this.blockLoadQueue.shift()
+            this.activeBlockLoads++
+            this.activeBlockBytes += next.bytes
+            next.resolve()
+        }
+    }
+
+    async _withBlockSlot(loader, bytes) {
+        await new Promise(resolve => {
+            this.blockLoadQueue.push({resolve, bytes})
+            this._drainBlockLoads()
+        })
+        try {
+            return await loader()
+        } finally {
+            this.activeBlockLoads--
+            this.activeBlockBytes -= bytes
+            this._drainBlockLoads()
+        }
     }
 
     async _read(position, length) {
@@ -214,6 +262,10 @@ class V10HicFile {
 
     async init() {
         if (this.initialized) return
+        return this._share(this.pendingMetadata, 'init', () => this._init())
+    }
+
+    async _init() {
         const prefix = await this._read(0, 88)
         if (typeof this.file.getSize === 'function') this.fileSize = await this.file.getSize()
         this.fileSize ??= this.file.size ?? this.config.fileSize
@@ -423,6 +475,14 @@ class V10HicFile {
         if (chr1 > chr2) [chr1, chr2] = [chr2, chr1]
         const key = `${chr1}_${chr2}`
         if (this.matrixCache.has(key)) return this.matrixCache.get(key)
+        return this._share(this.pendingMetadata, `matrix_${key}`, () => this._loadMatrix(chr1, chr2))
+    }
+
+    async _loadMatrix(chr1, chr2) {
+        await this.init()
+        if (chr1 > chr2) [chr1, chr2] = [chr2, chr1]
+        const key = `${chr1}_${chr2}`
+        if (this.matrixCache.has(key)) return this.matrixCache.get(key)
         const loc = this.matrixLocators.get(key)
         if (!loc) {
             this.matrixCache.set(key, undefined)
@@ -525,6 +585,13 @@ class V10HicFile {
         if (!locatorPresent(zoom.blockIndex)) return []
         const key = `${zoom.blockIndex.position}_${zoom.blockIndex.length}`
         if (this.blockIndexCache.has(key)) return this.blockIndexCache.get(key)
+        return this._share(this.pendingMetadata, `index_${key}`, () => this._loadBlockIndex(zoom))
+    }
+
+    async _loadBlockIndex(zoom) {
+        if (!locatorPresent(zoom.blockIndex)) return []
+        const key = `${zoom.blockIndex.position}_${zoom.blockIndex.length}`
+        if (this.blockIndexCache.has(key)) return this.blockIndexCache.get(key)
         requireV10(zoom.blockIndex.length <= this.maxRecordBytes, 'block index exceeds allocation limit')
         const cursor = new V10Cursor(await this._read(zoom.blockIndex.position, zoom.blockIndex.length), 'block index')
         cursor.magic('H10I')
@@ -561,6 +628,14 @@ class V10HicFile {
     async _readBlock(entry, zoom, chr1, chr2) {
         const cacheKey = `${entry.blockPosition}_${entry.storedByteLength}_${zoom.unit}_${zoom.resolutionIndex}_${zoom.valueType}`
         if (this.blockCache.has(cacheKey)) return this.blockCache.get(cacheKey)
+        return this._share(this.pendingBlocks, cacheKey, () => this._withBlockSlot(async () => {
+            const records = await this._loadBlock(entry, zoom, chr1, chr2)
+            this.blockCache.set(cacheKey, records)
+            return records
+        }, entry.storedByteLength))
+    }
+
+    async _loadBlock(entry, zoom, chr1, chr2) {
         const cursor = new V10Cursor(await this._read(entry.blockPosition, entry.storedByteLength), 'stored block')
         cursor.magic('H10B')
         requireV10(cursor.u8() === 1 && cursor.u8() === 1, 'unknown stored-block codec/version')
@@ -571,7 +646,6 @@ class V10HicFile {
         const compressed = cursor.bytes.subarray(cursor.position)
         const plain = await decompressZstd(compressed, uncompressedLength, this.maxRecordBytes)
         const records = this._decodeBlock(plain, entry.blockNumber, zoom, chr1, chr2)
-        this.blockCache.set(cacheKey, records)
         return records
     }
 
@@ -640,7 +714,7 @@ class V10HicFile {
             return defaultValue
         }
 
-        const records = []
+        const records = new RecordBlock(occupied, valueType, Math.max(nBins1, nBins2) > 0x100000000)
         const emit = (position, rawValue) => {
             if (representation !== DENSE && valueType === COUNT_UINT) requireV10(rawValue > 0n, 'sparse count is zero')
             const binColumn = columnOffset + (position % width)
@@ -709,30 +783,94 @@ class V10HicFile {
         return records
     }
 
-    async _materialized(matrix, zoom, x0, x1, y0, y1, callback) {
+    _projectBlock(records, entry, source, target) {
+        if (source.valueType !== COUNT_UINT) return undefined
+        const key = `${entry.blockPosition}_${entry.storedByteLength}_${source.unit}_${target.resolutionIndex}`
+        const cached = this.derivedBlockCache.get(key)
+        if (cached) return cached
+        const factor = target.binSize / source.binSize
+        const x0 = Math.floor(records.minX / factor), y0 = Math.floor(records.minY / factor)
+        const columns = Math.floor(records.maxX / factor) - x0 + 1
+        const rows = Math.floor(records.maxY / factor) - y0 + 1
+        const cells = columns * rows
+        // At most 32 MiB of counts plus 16 MiB of touched-cell indices.
+        // Finer projections and sparse wide blocks use the region path.
+        if (!Number.isSafeInteger(cells) || cells <= 0 || cells > 4 * 1024 * 1024 || !this.derivedBlockCache.maxBytes || !this.derivedBlockCache.maxEntries) return undefined
+        // Use native-number addition only when an upper bound on the sum of
+        // the entire source block proves every target sum is exactly safe.
+        // Otherwise retain uint64 accumulation and its overflow checks.
+        const safeNumbers = !records.wideCounts && BigInt(records.maxValue) * BigInt(records.length) <= MAX_SAFE_BIGINT
+        const counts = safeNumbers ? new Float64Array(cells) : new BigUint64Array(cells)
+        const touched = new Uint32Array(Math.min(cells, records.length))
+        let count = 0
+        for (let i = 0; i < records.length; i++) {
+            const x = Math.floor(records.x[i] / factor) - x0
+            const y = Math.floor(records.y[i] / factor) - y0
+            const at = y * columns + x
+            const previous = counts[at]
+            const sum = safeNumbers ? previous + records.values[i] : checkedAdd(previous, records.countAt(i), 'derived count')
+            if (previous === 0n || previous === 0) touched[count++] = at
+            counts[at] = sum
+        }
+        const projected = new RecordBlock(count, COUNT_UINT, Math.max(records.maxX, records.maxY) > 0xffffffff)
+        for (let i = 0; i < count; i++) {
+            const at = touched[i]
+            projected.push({bin1: x0 + at % columns, bin2: y0 + Math.floor(at / columns), value: counts[at]})
+        }
+        this.derivedBlockCache.set(key, projected)
+        return projected
+    }
+
+    async _materialized(matrix, zoom, x0, x1, y0, y1, callback, projection) {
         const index = await this._getBlockIndex(zoom)
         const inside = (x, y) => (x >= x0 && x < x1 && y >= y0 && y < y1) ||
             (matrix.chr1 === matrix.chr2 && y >= x0 && y < x1 && x >= y0 && x < y1)
-        const selected = new Set()
-        const seenCells = new Set()
-        let decodedCells = 0n
-        let decodedSum = 0n
+        const selected = new Map()
         for (const range of candidateBlockRanges(zoom, x0, x1, y0, y1)) {
             for (let i = lowerBound(index, range.first); i < index.length && index[i].blockNumber <= range.last; i++) {
-                if (selected.has(index[i].blockNumber)) continue
-                selected.add(index[i].blockNumber)
-                const records = await this._readBlock(index[i], zoom, matrix.chr1, matrix.chr2)
-                for (const record of records) {
-                    const cellKey = `${record.bin2}_${record.bin1}`
-                    requireV10(!seenCells.has(cellKey), 'duplicate matrix cell')
-                    seenCells.add(cellKey)
-                    decodedCells++
-                    if (record.valueType === COUNT_UINT) decodedSum = checkedAdd(decodedSum, record.value, 'matrix count sum')
-                    if (inside(record.bin1, record.bin2)) callback(record)
-                }
+                selected.set(index[i].blockNumber, index[i])
             }
         }
-        if (selected.size === index.length) {
+        const wholeMatrix = selected.size === index.length
+        let decodedCells = 0n
+        let decodedSum = 0n
+        const entries = [...selected.values()]
+        const loads = new Map()
+        const start = i => {
+            if (i >= entries.length) return
+            const load = this._readBlock(entries[i], zoom, matrix.chr1, matrix.chr2)
+            load.catch(() => {}) // a later prefetched failure is consumed below
+            loads.set(i, load)
+        }
+        for (let i = 0; i < Math.min(entries.length, this.blockLoadConcurrency); i++) start(i)
+        try {
+            for (let block = 0; block < entries.length; block++) {
+                const entry = entries[block]
+                const records = await loads.get(block)
+                loads.delete(block)
+                start(block + this.blockLoadConcurrency)
+                // The decoder validates strictly unique positions within each block,
+                // and verifies every cell's deterministic block number. Together
+                // with the unique block index, this also proves uniqueness across
+                // blocks; a query-sized Set of millions of string keys adds no check.
+                if (wholeMatrix) {
+                    decodedCells += BigInt(records.length)
+                    if (zoom.valueType === COUNT_UINT) {
+                        for (const record of records) decodedSum = checkedAdd(decodedSum, record.value, 'matrix count sum')
+                    }
+                }
+                const projected = projection && this._projectBlock(records, entry, zoom, projection)
+                const visible = projected || records
+                const factor = projected ? projection.binSize / zoom.binSize : 1
+                for (let i = 0; i < visible.length; i++) {
+                    const x = visible.x[i], y = visible.y[i]
+                    if (inside(x * factor, y * factor)) callback(visible.recordAt(i), Boolean(projected))
+                }
+            }
+        } finally {
+            await Promise.allSettled(loads.values())
+        }
+        if (wholeMatrix) {
             requireV10(decodedCells === zoom.occupiedCellCount, 'matrix occupied-cell count mismatch')
             if (zoom.valueType === COUNT_UINT) {
                 const expectedSum = typeof zoom.sumCounts === 'bigint' ? zoom.sumCounts : BigInt(zoom.sumCounts)
@@ -754,30 +892,30 @@ class V10HicFile {
         const sourceY1 = Math.min(y1 * factor, this._binCount(matrix.chr2, zoom.unit, source.resolutionIndex))
         const inside = (x, y) => (x >= x0 && x < x1 && y >= y0 && y < y1) ||
             (matrix.chr1 === matrix.chr2 && y >= x0 && y < x1 && x >= y0 && x < y1)
-        const seen = new Set()
+        const targetColumns = this._binCount(matrix.chr1, zoom.unit, zoom.resolutionIndex)
+        const targetRows = this._binCount(matrix.chr2, zoom.unit, zoom.resolutionIndex)
+        const compactKeys = Number.isSafeInteger(targetColumns * targetRows)
+        const targetKeyFor = (x, y) => compactKeys ? y * targetColumns + x : `${y}_${x}`
         const sums = new Map()
         const scores = []
-        await this._materialized(matrix, source, x0 * factor, sourceX1, y0 * factor, sourceY1, record => {
-            const key = `${record.bin2}_${record.bin1}`
-            requireV10(!seen.has(key), 'duplicate source cell while deriving resolution')
-            seen.add(key)
-            const tx = Math.floor(record.bin1 / factor)
-            const ty = Math.floor(record.bin2 / factor)
+        await this._materialized(matrix, source, x0 * factor, sourceX1, y0 * factor, sourceY1, (record, projected) => {
+            const tx = projected ? record.bin1 : Math.floor(record.bin1 / factor)
+            const ty = projected ? record.bin2 : Math.floor(record.bin2 / factor)
             if (!inside(tx, ty)) return
             if (zoom.valueType === COUNT_UINT) {
-                const targetKey = `${ty}_${tx}`
-                const previous = sums.get(targetKey)?.value || 0n
-                sums.set(targetKey, {bin1: tx, bin2: ty,
-                    value: checkedAdd(previous, record.value, 'derived count'), valueType: COUNT_UINT})
+                const targetKey = targetKeyFor(tx, ty)
+                const previous = sums.get(targetKey)
+                if (previous) previous.value = checkedAdd(previous.value, record.value, 'derived count')
+                else sums.set(targetKey, {bin1: tx, bin2: ty, value: record.value, valueType: COUNT_UINT})
             } else scores.push(record)
-        })
+        }, zoom)
         if (zoom.valueType === SCORE_FLOAT32) {
             scores.sort((a, b) => a.bin2 - b.bin2 || a.bin1 - b.bin1)
             for (const record of scores) {
                 requireV10(Number.isFinite(record.value), 'non-finite source score cannot be derived')
                 const tx = Math.floor(record.bin1 / factor)
                 const ty = Math.floor(record.bin2 / factor)
-                const targetKey = `${ty}_${tx}`
+                const targetKey = targetKeyFor(tx, ty)
                 const previous = sums.get(targetKey)?.value || 0
                 const value = previous + record.value
                 requireV10(Number.isFinite(value), 'derived score overflow')

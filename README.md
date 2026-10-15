@@ -79,10 +79,25 @@ to remote URL reads; `fileSize` applies to custom byte sources.
 | `oauthToken` | string, or a function returning one (or a promise for one) | Sent as `Authorization: Bearer …`. |
 | `mapUrl` | `(url: string) => string` | Rewrites the URL before it is fetched. See below. |
 | `fileSize` | non-negative safe integer | Total length for a custom v10 `file` adapter without `getSize()` or `size`. |
+| `v10BlockCacheBytes` | non-negative safe integer | Decoded source-block cache budget in bytes; defaults to 256 MiB. |
+| `v10BlockCacheSize` | non-negative safe integer | Maximum decoded source blocks; defaults to 24. Zero disables retention. |
+| `v10DerivedBlockCacheBytes` | non-negative safe integer | Complete coarse-block aggregate cache budget; defaults to 64 MiB. Zero disables it. |
+| `v10DerivedBlockCacheSize` | non-negative safe integer | Maximum coarse-block aggregates; defaults to 24. |
+| `v10ReadConcurrency` | integer, 1–8 | Maximum concurrent block loads per file; defaults to 2. |
+| `v10ReadAheadBytes` | positive safe integer | Combined compressed bytes allowed in concurrent block loads; defaults to 8 MiB. A larger individual block loads alone. |
 
 Custom byte sources used with v10 must expose their total length through an
 asynchronous `getSize()` method, a numeric `size` property, or `config.fileSize`.
 The built-in Node, browser-blob, and remote sources provide this automatically.
+
+V10 keeps decoded materialized blocks across resolution changes. Eligible integer
+coarse-block aggregates are cached separately, so overlapping tiles can reuse
+binning work. Derived bins are merged exactly across source-block boundaries;
+normalization is applied afterwards. Failed in-flight requests are not cached.
+The cache budgets bound retained typed-array storage, not total JavaScript heap
+or temporary decoding workspace. Reads overlap within the limits above;
+decoding and aggregation still run on the calling JavaScript thread.
+
 
 ### mapUrl
 

@@ -269,3 +269,35 @@ describe('.hic v10', function () {
         }
     })
 })
+
+describe('v10 region aggregation validation', () => {
+    it('retains whole-matrix count and occupancy checks', async () => {
+        const hic = new HicFile({file: new MemoryFile(createV10Fixture())})
+        const matrix = await hic.getMatrix(0, 0)
+        const zoom = matrix.getZoomData(10, 'BP')
+        const query = () => hic.getContactRecords('NONE',
+            {chr: 'chrA', start: 0, end: 80}, {chr: 'chrA', start: 0, end: 80}, 'BP', 20)
+        const sum = zoom.sumCounts
+        zoom.sumCounts = BigInt(sum) + 1n
+        await assertRejects(query(), /matrix count sum mismatch/)
+        zoom.sumCounts = sum
+        zoom.occupiedCellCount = 4n
+        await assertRejects(query(), /matrix occupied-cell count mismatch/)
+    })
+
+    it('rejects duplicate positions and cells assigned to another block in the decoder', async () => {
+        const hic = new HicFile({file: new MemoryFile(createV10Fixture())})
+        const matrix = await hic.getMatrix(0, 0)
+        const zoom = matrix.getZoomData(10, 'BP')
+        const decoder = vi.spyOn(hic.v10, '_decodeBlock')
+        await hic.readBlock(0, zoom)
+        const plain = decoder.mock.calls[0][0]
+        const duplicate = plain.slice()
+        // Sparse positions start after the 40-byte logical header. A zero
+        // second delta repeats the first cell and must still be rejected.
+        duplicate[41] = 0
+        assert.throws(() => hic.v10._decodeBlock(duplicate, 0, zoom, 0, 0), /duplicate sparse position/)
+        assert.throws(() => hic.v10._decodeBlock(plain, 1, zoom, 0, 0), /logical-block geometry/)
+        decoder.mockRestore()
+    })
+})
