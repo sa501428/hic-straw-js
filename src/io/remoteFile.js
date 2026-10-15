@@ -29,13 +29,20 @@ class RemoteFile {
             ? globalThis.fetch
             : globalThis.fetch?.default
         if (typeof fetchFunction !== 'function') throw Error('No fetch implementation is available')
-        const response = await fetchFunction(url, {
-            method: 'GET',
-            headers: headers,
-            redirect: 'follow',
-            mode: 'cors',
-
-        })
+        let response
+        for (let attempt = 0; attempt < 2; attempt++) {
+            response = await fetchFunction(url, {
+                method: 'GET',
+                headers: headers,
+                redirect: 'follow',
+                mode: 'cors',
+                ...(attempt === 1 ? {cache: 'no-store'} : {})
+            })
+            if (response.status === 206 || response.status >= 400 || attempt === 1) break
+            // A transient response can ignore Range. Cancel its body before
+            // retrying the same interval once, bypassing the browser cache.
+            try { await response.body?.cancel?.() } catch (_) { /* best effort */ }
+        }
 
         const status = response.status
 
@@ -50,7 +57,12 @@ class RemoteFile {
         // Range reads must never turn into unbounded whole-file downloads.
         const reject = async message => {
             try { await response.body?.cancel?.() } catch (_) { /* best effort */ }
-            throw new Error(message)
+            const err = new Error(`${message} (HTTP ${status}, ${rangeString})`)
+            err.code = status
+            err.headers = response.headers
+            err.url = url
+            err.range = rangeString
+            throw err
         }
         if (status !== 206) return reject('HTTP server must support byte ranges (206)')
         const contentRange = response.headers?.get?.('content-range')

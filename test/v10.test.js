@@ -240,10 +240,17 @@ describe('.hic v10', function () {
         assert.equal(records.length, 3)
     })
 
-    it('queries v10 through HTTP byte ranges', async function () {
+    it.each([undefined, 0, 1, 4])('queries v10 through HTTP byte ranges with transient response at request %s', async function (transientAt) {
         const bytes = createV10Fixture()
         const ranges = []
+        const cancel = vi.fn(async () => {})
+        const wholeFileBody = vi.fn()
+        const attempts = []
         vi.stubGlobal('fetch', async (url, init) => {
+            attempts.push(init)
+            if (transientAt !== undefined && attempts.length - 1 === transientAt) {
+                return {status: 200, body: {cancel}, arrayBuffer: wholeFileBody}
+            }
             const match = /^bytes=(\d+)-(\d+)$/.exec(init.headers.Range)
             const start = Number(match[1])
             const end = Math.min(Number(match[2]), bytes.length - 1)
@@ -264,6 +271,12 @@ describe('.hic v10', function () {
                 {chr: 'chrA', start: 0, end: 40}, {chr: 'chrA', start: 0, end: 40}, 'BP', 10)
             assert.equal(records.length, 3)
             assert.isTrue(ranges.every(([start, end]) => end - start + 1 < bytes.length))
+            assert.equal(wholeFileBody.mock.calls.length, 0)
+            if (transientAt !== undefined) {
+                assert.equal(cancel.mock.calls.length, 1)
+                assert.equal(attempts[transientAt + 1].headers.Range, attempts[transientAt].headers.Range)
+                assert.equal(attempts[transientAt + 1].cache, 'no-store')
+            }
         } finally {
             vi.unstubAllGlobals()
         }

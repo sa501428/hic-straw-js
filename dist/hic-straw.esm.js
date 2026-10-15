@@ -1930,40 +1930,46 @@ var c = class {
 	}
 	async read(e, t) {
 		t = Math.ceil(t);
-		let n = { ...this.config.headers };
-		n.Range = "bytes=" + e + "-" + (e + t - 1);
-		let r = this.url;
-		n["User-Agent"] = "IGV", this.config.oauthToken && (n.Authorization = `Bearer ${await u(this.config.oauthToken)}`);
-		let i = typeof globalThis.fetch == "function" ? globalThis.fetch : globalThis.fetch?.default;
-		if (typeof i != "function") throw Error("No fetch implementation is available");
-		let a = await i(r, {
+		let n = { ...this.config.headers }, r = "bytes=" + e + "-" + (e + t - 1);
+		n.Range = r;
+		let i = this.url;
+		n["User-Agent"] = "IGV", this.config.oauthToken && (n.Authorization = `Bearer ${await d(this.config.oauthToken)}`);
+		let a = typeof globalThis.fetch == "function" ? globalThis.fetch : globalThis.fetch?.default;
+		if (typeof a != "function") throw Error("No fetch implementation is available");
+		let o;
+		for (let e = 0; e < 2 && (o = await a(i, {
 			method: "GET",
 			headers: n,
 			redirect: "follow",
-			mode: "cors"
-		}), o = a.status;
-		if (o >= 400) {
-			let e = Error(`${o} ${a.statusText || "error"} — ${r}`);
-			throw e.code = o, e.headers = a.headers, e.url = r, e;
+			mode: "cors",
+			...e === 1 ? { cache: "no-store" } : {}
+		}), !(o.status === 206 || o.status >= 400 || e === 1)); e++) try {
+			await o.body?.cancel?.();
+		} catch {}
+		let s = o.status;
+		if (s >= 400) {
+			let e = Error(`${s} ${o.statusText || "error"} — ${i}`);
+			throw e.code = s, e.headers = o.headers, e.url = i, e;
 		}
-		let s = async (e) => {
+		let c = async (e) => {
 			try {
-				await a.body?.cancel?.();
+				await o.body?.cancel?.();
 			} catch {}
-			throw Error(e);
+			let t = /* @__PURE__ */ Error(`${e} (HTTP ${s}, ${r})`);
+			throw t.code = s, t.headers = o.headers, t.url = i, t.range = r, t;
 		};
-		if (o !== 206) return s("HTTP server must support byte ranges (206)");
-		let c = a.headers?.get?.("content-range");
-		if (c) {
-			let n = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(c), r = n && Number(n[1]), i = n && Number(n[2]), a = n && Number(n[3]);
-			if (!n || !Number.isSafeInteger(a) || r !== e || i !== e + t - 1 || i >= a) return s("HTTP server returned the wrong byte range");
-			if (this.size !== void 0 && this.size !== a) return s("HTTP file size changed during reading");
+		if (s !== 206) return c("HTTP server must support byte ranges (206)");
+		let l = o.headers?.get?.("content-range");
+		if (l) {
+			let n = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(l), r = n && Number(n[1]), i = n && Number(n[2]), a = n && Number(n[3]);
+			if (!n || !Number.isSafeInteger(a) || r !== e || i !== e + t - 1 || i >= a) return c("HTTP server returned the wrong byte range");
+			if (this.size !== void 0 && this.size !== a) return c("HTTP file size changed during reading");
 			this.size = a;
 		}
-		let l = await a.arrayBuffer();
-		if (l.byteLength !== t) throw Error("HTTP range length mismatch");
-		return l;
-		async function u(e) {
+		let u = await o.arrayBuffer();
+		if (u.byteLength !== t) throw Error("HTTP range length mismatch");
+		return u;
+		async function d(e) {
 			return typeof e == "function" ? await Promise.resolve(e()) : e;
 		}
 	}
