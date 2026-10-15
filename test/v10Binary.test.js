@@ -39,5 +39,17 @@ describe('.hic v10 binary primitives', function () {
         const ranges = candidateBlockRanges(zoom, 0, 4, 64, 68)
         assert.isAbove(ranges[0].first, 0)
         assert.equal(Math.floor(ranges[0].first / 100), depthForDistance(61, 4))
+        for (const b of [1, 4, 1024, 0x7fffffff]) {
+            for (let depth = 1; depth < 32; depth++) {
+                const boundary = Math.floor(Math.SQRT2 * b * (2 ** depth - 1))
+                for (const d of [boundary - 1, boundary, boundary + 1]) {
+                    if (d < 0 || d > 0xffffffff) continue
+                    const quotient = BigInt(d) ** 2n / (2n * BigInt(b) ** 2n)
+                    let exact = 0
+                    while (((1n << BigInt(exact + 1)) - 1n) ** 2n <= quotient) exact++
+                    assert.equal(depthForDistance(d, b), exact)
+                }
+            }
+        }
     })
 })

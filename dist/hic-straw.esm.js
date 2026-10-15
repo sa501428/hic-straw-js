@@ -3851,6 +3851,7 @@ var N = class e {
 		return this.position += 8, e;
 	}
 	uleb128() {
+		if (this.need(1), this.bytes[this.position] < 128) return BigInt(this.bytes[this.position++]);
 		let e = 0n, t = 0n, n = 0, r;
 		do {
 			k(n < 10, "ULEB128 is longer than 10 bytes"), r = this.u8();
@@ -3858,6 +3859,15 @@ var N = class e {
 			k(t < 63n || i <= 1n, "ULEB128 overflows uint64"), e |= i << t, t += 7n, n++;
 		} while (r & 128);
 		return k(e <= E, "ULEB128 overflows uint64"), k(n === 1 || e >= 1n << BigInt(7 * (n - 1)), "non-canonical ULEB128"), e;
+	}
+	uleb128Number() {
+		let e = 0, t = 1;
+		for (let n = 0; n < 8; n++) {
+			let r = this.u8();
+			if (e += (r & 127) * t, k(Number.isSafeInteger(e), "ULEB128 exceeds the JavaScript safe integer range"), !(r & 128)) return k(n === 0 || (r & 127) != 0, "non-canonical ULEB128"), e;
+			t *= 128;
+		}
+		throw new O("ULEB128 exceeds the JavaScript safe integer range");
 	}
 	magic(e) {
 		let t = new TextEncoder().encode(e);
@@ -3892,33 +3902,32 @@ var N = class e {
 	done() {
 		k(this.position === this.length, `${this.label} has trailing bytes`);
 	}
-};
+}, P = /* @__PURE__ */ new DataView(/* @__PURE__ */ new ArrayBuffer(4));
 function ee(e) {
-	let t = /* @__PURE__ */ new DataView(/* @__PURE__ */ new ArrayBuffer(4));
-	return t.setUint32(0, e >>> 0, !0), t.getFloat32(0, !0);
+	return P.setUint32(0, e >>> 0, !0), P.getFloat32(0, !0);
 }
 //#endregion
 //#region src/v10/zstd.js
-var P;
-async function F() {
-	if (!P) {
+var F;
+async function I() {
+	if (!F) {
 		let t = new e(), n = globalThis.fetch;
 		typeof n != "function" && typeof n?.default == "function" && (globalThis.fetch = n.default);
 		try {
-			P = t.init().then(() => t);
+			F = t.init().then(() => t);
 		} finally {
 			globalThis.fetch = n;
 		}
 	}
-	return P;
+	return F;
 }
-function I(e, t, n) {
+function L(e, t, n) {
 	k(t + n <= e.length, "truncated Zstandard frame header");
 	let r = 0;
 	for (let i = 0; i < n; i++) r += e[t + i] * 2 ** (8 * i);
 	return r;
 }
-function L(e) {
+function R(e) {
 	k(e.length >= 6, "truncated Zstandard frame"), k(e[0] === 40 && e[1] === 181 && e[2] === 47 && e[3] === 253, "matrix/vector payload is not a Zstandard data frame");
 	let t = 4, n = e[t++];
 	k((n & 8) == 0, "Zstandard frame uses a reserved header bit");
@@ -3929,7 +3938,7 @@ function L(e) {
 		1,
 		2,
 		4
-	][a], c = s ? I(e, t, s) : 0;
+	][a], c = s ? L(e, t, s) : 0;
 	t += s, k(c === 0, "Zstandard preset dictionaries are forbidden");
 	let l = o === 0 ? +!!r : o === 1 ? 2 : o === 2 ? 4 : 8;
 	k(t + l <= e.length, "truncated Zstandard frame header"), t += l;
@@ -3945,9 +3954,9 @@ function L(e) {
 	}
 	i && (k(t + 4 <= e.length, "truncated Zstandard content checksum"), t += 4), k(t === e.length, "concatenated Zstandard frames or trailing bytes are forbidden");
 }
-async function R(e, t, n = 512 * 1024 * 1024) {
-	k(Number.isSafeInteger(t) && t > 0 && t <= n, "invalid or excessive decompressed length"), L(e);
-	let r = await F(), i;
+async function te(e, t, n = 512 * 1024 * 1024) {
+	k(Number.isSafeInteger(t) && t > 0 && t <= n, "invalid or excessive decompressed length"), R(e);
+	let r = await I(), i;
 	try {
 		i = r.decode(e, t);
 	} catch (e) {
@@ -3957,24 +3966,24 @@ async function R(e, t, n = 512 * 1024 * 1024) {
 }
 //#endregion
 //#region src/v10/hicFile.js
-var z = 0, B = 1, V = 0, H = 1, U = 0, W = 1, G = 0, te = 1, ne = 0, re = 1, K = 2, ie = 0, ae = 1, q = 2, oe = 4294967295;
-function J(e) {
+var z = 0, B = 1, V = 0, H = 1, U = 0, W = 1, ne = 0, re = 1, ie = 0, ae = 1, G = 2, oe = 0, se = 1, K = 2, ce = 4294967295;
+function q(e) {
 	return k(e === "BP" || e === "FRAG", `unknown unit ${e}`), e === "FRAG" ? B : z;
 }
-function Y(e) {
+function J(e) {
 	return e === B ? "FRAG" : "BP";
 }
-function X(e, t) {
+function Y(e, t) {
 	let n = e.u64(), r = e.u64();
 	return k(n === 0n == (r === 0n), `${t} has an incomplete locator`), {
 		position: A(n, `${t} position`),
 		length: A(r, `${t} length`)
 	};
 }
-function Z(e) {
+function X(e) {
 	return e.position !== 0 && e.length !== 0;
 }
-function se(e, t) {
+function Z(e, t) {
 	for (let n = 0; n < e.length; n++) if (e[n] !== t[n]) return e[n] < t[n] ? -1 : 1;
 	return 0;
 }
@@ -3986,28 +3995,30 @@ function Q(e, t) {
 	}
 	return n;
 }
-function ce(e, t) {
-	let n = BigInt(e), r = BigInt(t), i = n * n / (2n * r * r), a = 0;
-	for (; a < 32;) {
-		let e = (1n << BigInt(a + 1)) - 1n;
-		if (e * e > i) break;
-		a++;
+function le(e, t) {
+	let n = Math.log2(1 + e / (Math.SQRT2 * t));
+	if (Math.abs(n - Math.round(n)) > 1e-12) return Math.floor(n);
+	let r = BigInt(e), i = BigInt(t), a = r * r / (2n * i * i), o = 0;
+	for (; o < 32;) {
+		let e = (1n << BigInt(o + 1)) - 1n;
+		if (e * e > a) break;
+		o++;
 	}
-	return a;
+	return o;
 }
-function le(e, t, n) {
+function ue(e, t, n) {
 	let r;
-	if (n.gridType === G) r = Math.floor(t / n.blockBinCount) * n.blockColumnCount + Math.floor(e / n.blockBinCount);
+	if (n.gridType === ne) r = Math.floor(t / n.blockBinCount) * n.blockColumnCount + Math.floor(e / n.blockBinCount);
 	else {
-		let i = ce(Math.abs(t - e), n.blockBinCount), a = Math.floor((e + t) / (2 * n.blockBinCount));
+		let i = le(Math.abs(t - e), n.blockBinCount), a = Math.floor((e + t) / (2 * n.blockBinCount));
 		r = i * n.blockColumnCount + a;
 	}
 	return k(Number.isSafeInteger(r) && r >= 0 && r <= 4294967295, "logical block number exceeds uint32"), r;
 }
-function ue(e, t, n, r, i) {
+function de(e, t, n, r, i) {
 	if (t >= n || r >= i) return [];
 	let a = [], o = e.blockBinCount;
-	if (e.gridType === G) {
+	if (e.gridType === ne) {
 		let s = Math.floor(t / o), c = Math.floor((n - 1) / o), l = Math.floor(r / o), u = Math.floor((i - 1) / o);
 		for (let t = l; t <= u; t++) a.push({
 			first: t * e.blockColumnCount + s,
@@ -4016,7 +4027,7 @@ function ue(e, t, n, r, i) {
 	} else {
 		let s = n - 1, c = i - 1, l = 0;
 		n <= r ? l = r - s : i <= t && (l = t - c);
-		let u = Math.max(Math.abs(c - t), Math.abs(s - r)), d = ce(l, o), f = ce(u, o), p = Math.floor((t + r) / (2 * o)), m = Math.floor((s + c) / (2 * o));
+		let u = Math.max(Math.abs(c - t), Math.abs(s - r)), d = le(l, o), f = le(u, o), p = Math.floor((t + r) / (2 * o)), m = Math.floor((s + c) / (2 * o));
 		for (let t = d; t <= f; t++) a.push({
 			first: t * e.blockColumnCount + p,
 			last: t * e.blockColumnCount + m
@@ -4025,7 +4036,7 @@ function ue(e, t, n, r, i) {
 	for (let e of a) k(e.first >= 0 && e.last >= e.first && e.last <= 4294967295, "candidate block range exceeds uint32");
 	return a;
 }
-var de = class {
+var fe = class {
 	constructor(e, t, n, r) {
 		this.chr1 = e, this.chr2 = t, this.descriptors = n, this.bpZoomData = n.slice(0, r), this.fragZoomData = n.slice(r);
 	}
@@ -4040,23 +4051,23 @@ var de = class {
 		for (let t = 0; t < n.length; t++) if (n[t].binSize >= e) return t;
 		return n.length - 1;
 	}
-}, fe = class {
+}, pe = class {
 	constructor(e, t) {
 		this.reader = e, this.entry = t, this.nValues = t.valueCount;
 	}
 	async getValues(e, t) {
 		return this.reader._readVectorValues(this.entry, e, t);
 	}
-}, pe = class {
+}, me = class {
 	constructor(e, t, n) {
 		this.reader = e, this.entry = t, this.nValues = t.valueCount, this.scale = n;
 	}
 	async getValues(e = 0, t = this.nValues) {
 		return (await this.reader._readVectorValues(this.entry, e, t)).map((e) => e / this.scale);
 	}
-}, me = class {
+}, he = class {
 	constructor(e) {
-		this.config = e, this.file = e.file, this.version = 10, this.magic = "HIC", this.matrixCache = /* @__PURE__ */ new Map(), this.blockIndexCache = /* @__PURE__ */ new Map(), this.blockCache = new T(e.v10BlockCacheSize ?? 24, e.v10BlockCacheBytes ?? 256 * 1024 * 1024), this.derivedBlockCache = new T(e.v10DerivedBlockCacheSize ?? 24, e.v10DerivedBlockCacheBytes ?? 64 * 1024 * 1024), this.vectorChunkCache = new v(e.v10VectorChunkCacheSize || 12), this.maxRecordBytes = e.v10MaxRecordBytes || 512 * 1024 * 1024, this.pendingBlocks = /* @__PURE__ */ new Map(), this.pendingMetadata = /* @__PURE__ */ new Map(), this.blockLoadConcurrency = e.v10ReadConcurrency ?? 2, k(Number.isInteger(this.blockLoadConcurrency) && this.blockLoadConcurrency >= 1 && this.blockLoadConcurrency <= 8, "block read concurrency must be an integer from 1 to 8"), this.activeBlockLoads = 0, this.activeBlockBytes = 0, this.blockReadAheadBytes = e.v10ReadAheadBytes ?? 8 * 1024 * 1024, k(Number.isSafeInteger(this.blockReadAheadBytes) && this.blockReadAheadBytes > 0, "block read-ahead byte budget must be a positive safe integer"), this.blockLoadQueue = [];
+		this.config = e, this.file = e.file, this.version = 10, this.magic = "HIC", this.matrixCache = /* @__PURE__ */ new Map(), this.blockIndexCache = /* @__PURE__ */ new Map(), this.blockCache = new T(e.v10BlockCacheSize ?? 24, e.v10BlockCacheBytes ?? 256 * 1024 * 1024), this.derivedBlockCache = new T(e.v10DerivedBlockCacheSize ?? 24, e.v10DerivedBlockCacheBytes ?? 64 * 1024 * 1024), this.vectorChunkCache = new T(e.v10VectorChunkCacheSize ?? 64, e.v10VectorChunkCacheBytes ?? 32 * 1024 * 1024), this.maxRecordBytes = e.v10MaxRecordBytes || 512 * 1024 * 1024, this.pendingBlocks = /* @__PURE__ */ new Map(), this.pendingMetadata = /* @__PURE__ */ new Map(), this.pendingVectors = /* @__PURE__ */ new Map(), this.blockLoadConcurrency = e.v10ReadConcurrency ?? 2, k(Number.isInteger(this.blockLoadConcurrency) && this.blockLoadConcurrency >= 1 && this.blockLoadConcurrency <= 8, "block read concurrency must be an integer from 1 to 8"), this.activeBlockLoads = 0, this.activeBlockBytes = 0, this.blockReadAheadBytes = e.v10ReadAheadBytes ?? 8 * 1024 * 1024, k(Number.isSafeInteger(this.blockReadAheadBytes) && this.blockReadAheadBytes > 0, "block read-ahead byte budget must be a positive safe integer"), this.blockLoadQueue = [];
 	}
 	_share(e, t, n) {
 		if (!e.has(t)) {
@@ -4091,7 +4102,7 @@ var de = class {
 		return k(n && n.byteLength === t, `short read at ${e}; expected ${t} bytes`), new Uint8Array(n);
 	}
 	_validateLocator(e, t) {
-		Z(e) && k(M(e.position, e.length, `${t} interval`) <= this.fileSize, `${t} exceeds file size`);
+		X(e) && k(M(e.position, e.length, `${t} interval`) <= this.fileSize, `${t} exceeds file size`);
 	}
 	async init() {
 		if (!this.initialized) return this._share(this.pendingMetadata, "init", () => this._init());
@@ -4102,9 +4113,9 @@ var de = class {
 		let t = new N(e, "fixed header");
 		t.magic("HIC\0"), k(t.u32() === 10, "unsupported file version");
 		let n = A(t.u64(), "header length");
-		k(n >= 88 && n <= this.maxRecordBytes && n <= this.fileSize, "invalid header length"), this.headerLength = n, this.footerLocator = X(t, "footer"), this.normLocator = X(t, "normalization-vector index"), this.expectedLocator = X(t, "expected-value index"), this.normExpectedLocator = X(t, "normalized expected-value index"), t.zero(8), t.done(), k(Z(this.footerLocator), "footer is missing"), this._validateLocator(this.footerLocator, "footer"), this._validateLocator(this.normLocator, "normalization-vector index"), this._validateLocator(this.expectedLocator, "expected-value index"), this._validateLocator(this.normExpectedLocator, "normalized expected-value index");
+		k(n >= 88 && n <= this.maxRecordBytes && n <= this.fileSize, "invalid header length"), this.headerLength = n, this.footerLocator = Y(t, "footer"), this.normLocator = Y(t, "normalization-vector index"), this.expectedLocator = Y(t, "expected-value index"), this.normExpectedLocator = Y(t, "normalized expected-value index"), t.zero(8), t.done(), k(X(this.footerLocator), "footer is missing"), this._validateLocator(this.footerLocator, "footer"), this._validateLocator(this.normLocator, "normalization-vector index"), this._validateLocator(this.expectedLocator, "expected-value index"), this._validateLocator(this.normExpectedLocator, "normalized expected-value index");
 		let r = new N(await this._read(0, n), "header");
-		r.magic("HIC\0"), k(r.u32() === 10 && A(r.u64(), "header length") === n, "header prefix mismatch"), X(r, "footer"), X(r, "normalization-vector index"), X(r, "expected-value index"), X(r, "normalized expected-value index"), r.zero(8), this._parseVariableHeader(r), r.done(), await this._readFooter(), this._buildAliasesAndMetadata(), this.config.nvi = Z(this.normLocator) ? `${this.normLocator.position},${this.normLocator.length}` : void 0, this.initialized = !0;
+		r.magic("HIC\0"), k(r.u32() === 10 && A(r.u64(), "header length") === n, "header prefix mismatch"), Y(r, "footer"), Y(r, "normalization-vector index"), Y(r, "expected-value index"), Y(r, "normalized expected-value index"), r.zero(8), this._parseVariableHeader(r), r.done(), await this._readFooter(), this._buildAliasesAndMetadata(), this.config.nvi = X(this.normLocator) ? `${this.normLocator.position},${this.normLocator.length}` : void 0, this.initialized = !0;
 	}
 	_parseVariableHeader(e) {
 		this.genomeId = e.cstr(), this.attributeList = [], this.attributes = {};
@@ -4135,7 +4146,7 @@ var de = class {
 				let n = e.u32(), i = e.u8(), a = e.u8();
 				e.zero(2);
 				let o = e.u32(), s = this.resolutionRecords[t];
-				k(n > 0 && (!s.length || n > s[s.length - 1].binSize), "resolution list is not strictly increasing"), k(i <= 1 && a <= 1, "unknown resolution enum"), i === V ? k(o === oe, "materialized resolution has a source") : k(a === 1 && o < r && s[o].storageMode === V && n % s[o].binSize === 0, "invalid derived resolution source"), s.push({
+				k(n > 0 && (!s.length || n > s[s.length - 1].binSize), "resolution list is not strictly increasing"), k(i <= 1 && a <= 1, "unknown resolution enum"), i === V ? k(o === ce, "materialized resolution has a source") : k(a === 1 && o < r && s[o].storageMode === V && n % s[o].binSize === 0, "invalid derived resolution source"), s.push({
 					binSize: n,
 					storageMode: i,
 					aggregation: a,
@@ -4174,8 +4185,8 @@ var de = class {
 		e.zero(4), k(this.footerLocator.length === 24 + t * 24, "invalid footer entry count/length"), this.masterIndex = {}, this.matrixLocators = /* @__PURE__ */ new Map();
 		let n;
 		for (let r = 0; r < t; r++) {
-			let t = e.u32(), r = e.u32(), i = X(e, "matrix"), a = [t, r];
-			k(t <= r && r < this.chromosomes.length && (!n || se(n, a) < 0), "invalid matrix directory order/key"), k(Z(i), "matrix locator is absent"), this._validateLocator(i, "matrix"), this.matrixLocators.set(`${t}_${r}`, i), this.masterIndex[`${t}_${r}`] = {
+			let t = e.u32(), r = e.u32(), i = Y(e, "matrix"), a = [t, r];
+			k(t <= r && r < this.chromosomes.length && (!n || Z(n, a) < 0), "invalid matrix directory order/key"), k(X(i), "matrix locator is absent"), this._validateLocator(i, "matrix"), this.matrixLocators.set(`${t}_${r}`, i), this.masterIndex[`${t}_${r}`] = {
 				start: i.position,
 				size: i.length
 			}, n = a;
@@ -4236,9 +4247,9 @@ var de = class {
 		let o = [];
 		for (let n = 0; n < a; n++) o.push(this._parseDescriptor(i, e, t, n));
 		i.done();
-		let s = new de(e, t, o, this.bpResolutions.length);
+		let s = new fe(e, t, o, this.bpResolutions.length);
 		for (let e of o) if (e.storageMode === H) {
-			let t = s.getZoomDataByIndex(e.sourceResolutionIndex, Y(e.unit));
+			let t = s.getZoomDataByIndex(e.sourceResolutionIndex, J(e.unit));
 			k(t && t.valueType === e.valueType, "derived/source value type mismatch");
 		}
 		return this.matrixCache.set(n, s), s;
@@ -4246,12 +4257,12 @@ var de = class {
 	_parseDescriptor(e, t, n, r) {
 		let i = e.u8(), a = e.u8(), o = e.u8(), s = e.u8(), c = e.u32(), l = e.u32(), u = e.u32(), d = e.u8();
 		e.zero(3);
-		let f = s === U ? e.u64() : e.f64(), p = e.u64(), m = e.f32(), h = e.f32(), g = e.u32(), _ = e.u32(), v = X(e, "block index"), y = e.u32();
+		let f = s === U ? e.u64() : e.f64(), p = e.u64(), m = e.f32(), h = e.f32(), g = e.u32(), _ = e.u32(), v = Y(e, "block index"), y = e.u32();
 		e.zero(4);
 		let b = r < this.bpResolutions.length ? z : B, x = r - (b === B ? this.bpResolutions.length : 0), S = this.resolutionRecords[b][x];
-		k(i === b && c === x && l === S.binSize && a === S.storageMode && o === S.aggregation && u === S.sourceResolutionIndex, "matrix resolution descriptor does not match header"), k(s <= W && a <= H && o <= 1, "unknown matrix descriptor enum"), k(d === (t === n ? te : G), "invalid matrix grid type");
+		k(i === b && c === x && l === S.binSize && a === S.storageMode && o === S.aggregation && u === S.sourceResolutionIndex, "matrix resolution descriptor does not match header"), k(s <= W && a <= H && o <= 1, "unknown matrix descriptor enum"), k(d === (t === n ? re : ne), "invalid matrix grid type");
 		let C = this._binCount(t, i, c), w = this._binCount(n, i, c);
-		k(p <= (t === n ? BigInt(C) * BigInt(C + 1) / 2n : BigInt(C) * BigInt(w)), "matrix occupied-cell count exceeds its geometry"), k(g > 0 && _ === Math.ceil(C / g), "invalid matrix block geometry"), a === H ? k(!Z(v) && y === 0, "derived resolution has physical storage") : p > 0n ? k(Z(v) && y > 0 && BigInt(y) <= p, "non-empty matrix is missing or has excessive block storage") : k(!Z(v) && y === 0, "empty matrix has block storage"), Z(v) && this._validateLocator(v, "block index");
+		k(p <= (t === n ? BigInt(C) * BigInt(C + 1) / 2n : BigInt(C) * BigInt(w)), "matrix occupied-cell count exceeds its geometry"), k(g > 0 && _ === Math.ceil(C / g), "invalid matrix block geometry"), a === H ? k(!X(v) && y === 0, "derived resolution has physical storage") : p > 0n ? k(X(v) && y > 0 && BigInt(y) <= p, "non-empty matrix is missing or has excessive block storage") : k(!X(v) && y === 0, "empty matrix has block storage"), X(v) && this._validateLocator(v, "block index");
 		let T = s === U && f <= D ? Number(f) : f, E = {
 			unit: i,
 			storageMode: a,
@@ -4274,13 +4285,13 @@ var de = class {
 			chr2Index: n,
 			zoom: {
 				index: c,
-				unit: Y(i),
+				unit: J(i),
 				binSize: l
 			},
 			sumCounts: T,
 			averageCount: Number(f) / C / w
 		};
-		return E.getKey = () => `${this.chromosomes[t].name}_${this.chromosomes[n].name}_${Y(i)}_${l}`, E.blockIndex.getBlockIndexEntry = async (e) => {
+		return E.getKey = () => `${this.chromosomes[t].name}_${this.chromosomes[n].name}_${J(i)}_${l}`, E.blockIndex.getBlockIndexEntry = async (e) => {
 			let t = await this._getBlockIndex(E), n = t[Q(t, e)];
 			return n?.blockNumber === e ? {
 				filePosition: n.blockPosition,
@@ -4290,12 +4301,12 @@ var de = class {
 		}, E;
 	}
 	async _getBlockIndex(e) {
-		if (!Z(e.blockIndex)) return [];
+		if (!X(e.blockIndex)) return [];
 		let t = `${e.blockIndex.position}_${e.blockIndex.length}`;
 		return this.blockIndexCache.has(t) ? this.blockIndexCache.get(t) : this._share(this.pendingMetadata, `index_${t}`, () => this._loadBlockIndex(e));
 	}
 	async _loadBlockIndex(e) {
-		if (!Z(e.blockIndex)) return [];
+		if (!X(e.blockIndex)) return [];
 		let t = `${e.blockIndex.position}_${e.blockIndex.length}`;
 		if (this.blockIndexCache.has(t)) return this.blockIndexCache.get(t);
 		k(e.blockIndex.length <= this.maxRecordBytes, "block index exceeds allocation limit");
@@ -4326,13 +4337,36 @@ var de = class {
 			return this.blockCache.set(i, a), a;
 		}, e.storedByteLength));
 	}
-	async _loadBlock(e, t, n, r) {
-		let i = new N(await this._read(e.blockPosition, e.storedByteLength), "stored block");
-		i.magic("H10B"), k(i.u8() === 1 && i.u8() === 1, "unknown stored-block codec/version"), i.zero(2);
-		let a = i.u32();
-		k(i.u32() === e.blockNumber && a >= 40, "stored block does not match its index entry");
-		let o = await R(i.bytes.subarray(i.position), a, this.maxRecordBytes);
-		return this._decodeBlock(o, e.blockNumber, t, n, r);
+	_prefetchBlocks(e, t, n, r) {
+		let i = (e) => `${e.blockPosition}_${e.storedByteLength}_${t.unit}_${t.resolutionIndex}_${t.valueType}`, a = e.filter((e) => !this.blockCache.has(i(e)) && !this.pendingBlocks.has(i(e))).sort((e, t) => e.blockPosition - t.blockPosition);
+		for (let e = 0; e < a.length;) {
+			let o = e + 1, s = a[e].blockPosition, c = s + a[e].storedByteLength;
+			for (; o < a.length && a[o].blockPosition === c && c + a[o].storedByteLength - s <= this.blockReadAheadBytes;) c += a[o++].storedByteLength;
+			if (o - e > 1) {
+				let l = a.slice(e, o), u = this._withBlockSlot(async () => {
+					let e = await this._read(s, c - s), a = [];
+					for (let o of l) {
+						let c = o.blockPosition - s, l = await this._loadBlock(o, t, n, r, e.subarray(c, c + o.storedByteLength));
+						this.blockCache.set(i(o), l), a.push(l);
+					}
+					return a;
+				}, c - s);
+				l.forEach((e, t) => {
+					let n = i(e), r = u.then((e) => e[t]).finally(() => this.pendingBlocks.delete(n));
+					r.catch(() => {}), this.pendingBlocks.set(n, r);
+				});
+			}
+			e = o;
+		}
+		return e.map((e) => this._readBlock(e, t, n, r));
+	}
+	async _loadBlock(e, t, n, r, i) {
+		let a = new N(i ?? await this._read(e.blockPosition, e.storedByteLength), "stored block");
+		a.magic("H10B"), k(a.u8() === 1 && a.u8() === 1, "unknown stored-block codec/version"), a.zero(2);
+		let o = a.u32();
+		k(a.u32() === e.blockNumber && o >= 40, "stored block does not match its index entry");
+		let s = await te(a.bytes.subarray(a.position), o, this.maxRecordBytes);
+		return this._decodeBlock(s, e.blockNumber, t, n, r);
 	}
 	_decodeBlock(e, t, n, r, i) {
 		let a = new N(e, "logical block");
@@ -4340,16 +4374,16 @@ var de = class {
 		let o = a.u8(), s = a.u8(), c = a.u8(), l = a.u8();
 		a.zero(3);
 		let u = a.u32(), d = a.u32(), f = a.u32(), p = a.u32(), m = a.u64(), h = a.u32(), g = a.u32();
-		k(o <= K && s <= q && c === n.valueType && l <= 1 && f > 0 && p > 0 && m > 0n, "invalid logical-block header");
-		let _ = BigInt(f) * BigInt(p), v = o === K ? _ : m;
+		k(o <= G && s <= K && c === n.valueType && l <= 1 && f > 0 && p > 0 && m > 0n, "invalid logical-block header");
+		let _ = BigInt(f) * BigInt(p), v = o === G ? _ : m;
 		k(m <= _ && v <= BigInt(Math.floor(this.maxRecordBytes / 8)) && h + g === a.available, "invalid logical-block stream sizes");
 		let y = A(m, "occupied cell count"), b = A(_, "logical block cell count"), x = A(v, "logical block value-slot count"), S = this._binCount(r, n.unit, n.resolutionIndex), C = this._binCount(i, n.unit, n.resolutionIndex);
 		k(u < S && d < C, "block offsets exceed chromosome");
 		let T = a.take(h, "block position stream"), E = a.take(g, "block value stream");
-		a.done(), k(o !== K || s === q, "dense block values must be direct");
+		a.done(), k(o !== G || s === K, "dense block values must be direct");
 		let D, O = [], M = 0, P = () => c === W ? E.u32() : E.uleb128();
-		if (s === ie) k(x > 0, "all-default mode requires values"), D = P();
-		else if (s === ae) {
+		if (s === oe) k(x > 0, "all-default mode requires values"), D = P();
+		else if (s === se) {
 			D = P();
 			let e = A(E.uleb128(), "exception count");
 			k(e > 0 && e < x && e <= E.available, "invalid exception count");
@@ -4362,38 +4396,38 @@ var de = class {
 			}
 		}
 		let F = (e) => {
-			if (s === q) return P();
-			if (s === ae && M < O.length && O[M] === e) {
+			if (s === K) return P();
+			if (s === se && M < O.length && O[M] === e) {
 				M++;
 				let e = P();
 				return k(e !== D, "exception value equals default"), e;
 			}
 			return D;
 		}, I = new w(y, c, Math.max(S, C) > 4294967296), L = (e, a) => {
-			o !== K && c === U && k(a > 0n, "sparse count is zero");
+			o !== G && c === U && k(a > 0n, "sparse count is zero");
 			let s = u + e % f, l = d + Math.floor(e / f);
-			k(s < S && l < C && (r !== i || l >= s) && le(s, l, n) === t, "cell violates logical-block geometry"), I.push({
+			k(s < S && l < C && (r !== i || l >= s) && ue(s, l, n) === t, "cell violates logical-block geometry"), I.push({
 				bin1: s,
 				bin2: l,
 				value: c === W ? ee(a) : a,
 				valueType: c
 			});
 		}, R = 0;
-		if (o === ne) {
+		if (o === ie) {
 			k(l === 0 && y <= h, "invalid sparse position stream");
-			let e = 0n;
+			let e = 0;
 			for (let t = 0; t < y; t++) {
-				let n = T.uleb128();
-				k(t === 0 || n > 0n, "duplicate sparse position");
-				let r = t === 0 ? n : j(e, n, "sparse position");
-				k(r < _, "sparse position is out of range"), L(A(r, "sparse position"), F(t)), e = r, R++;
+				let n = T.uleb128Number();
+				k(t === 0 || n > 0, "duplicate sparse position");
+				let r = e + n;
+				k(Number.isSafeInteger(r) && r < b, "sparse position is out of range"), L(r, F(t)), e = r, R++;
 			}
-		} else if (o === re || c === W) {
+		} else if (o === ae || c === W) {
 			k(l === 1 && h === Math.ceil(b / 8), "invalid presence bitmap"), b % 8 && k(T.bytes[h - 1] >>> b % 8 == 0, "nonzero presence-bitmap padding");
 			let e = 0;
 			for (let t = 0; t < b; t++) {
 				let n = (T.bytes[Math.floor(t / 8)] & 1 << t % 8) != 0;
-				if (o === K) {
+				if (o === G) {
 					let r = F(t);
 					n ? (L(t, r), e++) : k(r === 0, "absent dense score is not positive zero"), R++;
 				} else n && (k(e < y, "presence bitmap population exceeds occupied count"), L(t, F(e++)), R++);
@@ -4434,21 +4468,35 @@ var de = class {
 	}
 	async _materialized(e, t, n, r, i, a, o, s) {
 		let c = await this._getBlockIndex(t), l = (t, o) => t >= n && t < r && o >= i && o < a || e.chr1 === e.chr2 && o >= n && o < r && t >= i && t < a, u = /* @__PURE__ */ new Map();
-		for (let e of ue(t, n, r, i, a)) for (let t = Q(c, e.first); t < c.length && c[t].blockNumber <= e.last; t++) u.set(c[t].blockNumber, c[t]);
+		for (let e of de(t, n, r, i, a)) for (let t = Q(c, e.first); t < c.length && c[t].blockNumber <= e.last; t++) u.set(c[t].blockNumber, c[t]);
 		let d = u.size === c.length, f = 0n, p = 0n, m = [...u.values()], h = /* @__PURE__ */ new Map(), g = (n) => {
-			if (n >= m.length) return;
-			let r = this._readBlock(m[n], t, e.chr1, e.chr2);
-			r.catch(() => {}), h.set(n, r);
+			if (n >= m.length || h.has(n)) return;
+			let r = m.slice(n, n + this.blockLoadConcurrency);
+			this._prefetchBlocks(r, t, e.chr1, e.chr2).forEach((e, t) => {
+				e.catch(() => {}), h.set(n + t, e);
+			});
 		};
 		for (let e = 0; e < Math.min(m.length, this.blockLoadConcurrency); e++) g(e);
 		try {
-			for (let e = 0; e < m.length; e++) {
-				let n = m[e], r = await h.get(e);
-				if (h.delete(e), g(e + this.blockLoadConcurrency), d && (f += BigInt(r.length), t.valueType === U)) for (let e of r) p = j(p, e.value, "matrix count sum");
-				let i = s && this._projectBlock(r, n, t, s), a = i || r, c = i ? s.binSize / t.binSize : 1;
-				for (let e = 0; e < a.length; e++) {
-					let t = a.x[e], n = a.y[e];
-					l(t * c, n * c) && o(a.recordAt(e), !!i);
+			for (let c = 0; c < m.length; c++) {
+				let u = m[c], _ = await h.get(c);
+				if (h.delete(c), h.size < this.blockLoadConcurrency && g(c + h.size + 1), d && (f += BigInt(_.length), t.valueType === U)) for (let e of _) p = j(p, e.value, "matrix count sum");
+				let v = s && this._projectBlock(_, u, t, s), y = v || _, b = v ? s.binSize / t.binSize : 1, x = (e) => {
+					let t = 0, n = y.length;
+					for (; t < n;) {
+						let r = t + n >>> 1;
+						y.y[r] < e ? t = r + 1 : n = r;
+					}
+					return t;
+				}, S = [[x(i / b), x(a / b)]];
+				e.chr1 === e.chr2 && S.push([x(n / b), x(r / b)]), S.sort((e, t) => e[0] - t[0]);
+				let C = 0;
+				for (let [e, t] of S) {
+					for (let n = Math.max(e, C); n < t; n++) {
+						let e = y.x[n], t = y.y[n];
+						l(e * b, t * b) && o(y.recordAt(n), !!v);
+					}
+					C = Math.max(C, t);
 				}
 			}
 		} finally {
@@ -4462,7 +4510,7 @@ var de = class {
 	async _raw(e, t, n, r, i, a) {
 		let o = [];
 		if (t.storageMode === V) return await this._materialized(e, t, n, r, i, a, (e) => o.push(e)), o;
-		let s = e.getZoomDataByIndex(t.sourceResolutionIndex, Y(t.unit));
+		let s = e.getZoomDataByIndex(t.sourceResolutionIndex, J(t.unit));
 		k(s && s.storageMode === V, "derived source descriptor is missing");
 		let c = t.binSize / s.binSize, l = Math.min(r * c, this._binCount(e.chr1, t.unit, s.resolutionIndex)), u = Math.min(a * c, this._binCount(e.chr2, t.unit, s.resolutionIndex)), d = (t, o) => t >= n && t < r && o >= i && o < a || e.chr1 === e.chr2 && o >= n && o < r && t >= i && t < a, f = this._binCount(e.chr1, t.unit, t.resolutionIndex), p = this._binCount(e.chr2, t.unit, t.resolutionIndex), m = Number.isSafeInteger(f * p), h = (e, t) => m ? t * f + e : `${t}_${e}`, g = /* @__PURE__ */ new Map(), _ = [];
 		if (await this._materialized(e, s, n * c, l, i * c, u, (e, n) => {
@@ -4502,7 +4550,7 @@ var de = class {
 	}
 	async getContactRecords(e, t, n, r, i, a = "observed") {
 		await this.init(), k(a === "observed" || a === "oe" || a === "expected", `unknown matrix type ${a}`);
-		let o = J(r), s = this.resolutionRecords[o].findIndex((e) => e.binSize === i);
+		let o = q(r), s = this.resolutionRecords[o].findIndex((e) => e.binSize === i);
 		k(s >= 0, `unavailable resolution ${i}`);
 		let c = this.getFileChrName(t.chr), l = this.getFileChrName(n.chr), u = this.chromosomeIndexMap[c], d = this.chromosomeIndexMap[l];
 		k(u !== void 0 && d !== void 0, "unknown chromosome in query");
@@ -4514,25 +4562,26 @@ var de = class {
 		if (!h) return [];
 		let g = h.getZoomData(i, r);
 		k(g, `matrix has no ${r} resolution ${i}`);
-		let v = await this._raw(h, g, p.start, p.end, m.start, m.end), y = e && e !== "NONE", b, x;
-		if (y && a !== "expected") {
-			let t = await this.getNormalizationVector(e, u, r, i), n = u === d ? t : await this.getNormalizationVector(e, d, r, i);
-			t && n && (b = await t.getValues(p.start, p.end), x = await n.getValues(m.start, m.end));
-		}
-		let S = y && a !== "expected" && b && x;
-		y && a !== "expected" && k(S, `normalization ${e} is unavailable at ${i}`);
+		let v = e && e !== "NONE", [y, [b, x]] = await Promise.all([this._raw(h, g, p.start, p.end, m.start, m.end), (async () => {
+			if (!v || a === "expected") return [];
+			let [t, n] = await Promise.all([this.getNormalizationVector(e, u, r, i), this.getNormalizationVector(e, d, r, i)]);
+			if (!t || !n) return [];
+			let o = t.getValues(p.start, p.end), s = u === d && p.start === m.start && p.end === m.end ? o : n.getValues(m.start, m.end);
+			return Promise.all([o, s]);
+		})()]), S = v && a !== "expected" && b && x;
+		v && a !== "expected" && k(S, `normalization ${e} is unavailable at ${i}`);
 		let C, w, T = 0, E = u === d ? void 0 : g.averageCount;
-		if (a !== "observed" && u === d) if (C = await this.getExpectedValueVector(e || "NONE", u, r, i), k(C, `expected values are unavailable for ${e || "NONE"} at ${i}`), v.length) {
+		if (a !== "observed" && u === d) if (C = await this.getExpectedValueVector(e || "NONE", u, r, i), k(C, `expected values are unavailable for ${e || "NONE"} at ${i}`), y.length) {
 			let e = 0;
 			T = 2 ** 53 - 1;
-			for (let t of v) {
+			for (let t of y) {
 				let n = Math.abs(t.bin1 - t.bin2);
 				T = Math.min(T, n), e = Math.max(e, n + 1);
 			}
 			w = await C.getValues(T, e);
 		} else w = [];
 		let O = [];
-		for (let e of v) {
+		for (let e of y) {
 			let t = e.bin1, n = e.bin2;
 			u === d && !(t >= p.start && t < p.end && n >= m.start && n < m.end) && ([t, n] = [n, t]);
 			let r = e.value;
@@ -4552,7 +4601,7 @@ var de = class {
 	}
 	async getBlocks(e, t, n, r) {
 		await this.init();
-		let i = J(n), a = this.resolutionRecords[i].findIndex((e) => e.binSize === r);
+		let i = q(n), a = this.resolutionRecords[i].findIndex((e) => e.binSize === r);
 		k(a >= 0, `unavailable resolution ${r}`);
 		let o = this.chromosomeIndexMap[this.getFileChrName(e.chr)], s = this.chromosomeIndexMap[this.getFileChrName(t.chr)];
 		k(o !== void 0 && s !== void 0, "unknown chromosome in query"), o > s && ([o, s] = [s, o], [e, t] = [t, e]);
@@ -4569,7 +4618,7 @@ var de = class {
 			}] : [];
 		}
 		let u = this._regionBins(e, o, i, a), d = this._regionBins(t, s, i, a), f = await this._getBlockIndex(l), p = /* @__PURE__ */ new Set();
-		for (let e of ue(l, u.start, u.end, d.start, d.end)) for (let t = Q(f, e.first); t < f.length && f[t].blockNumber <= e.last; t++) p.add(f[t].blockNumber);
+		for (let e of de(l, u.start, u.end, d.start, d.end)) for (let t = Q(f, e.first); t < f.length && f[t].blockNumber <= e.last; t++) p.add(f[t].blockNumber);
 		let m = [];
 		for (let e of [...p].sort((e, t) => e - t)) {
 			let t = await this.readBlock(e, l);
@@ -4595,71 +4644,75 @@ var de = class {
 		return (t === "FRAG" ? this.fragResolutions : this.bpResolutions).indexOf(e);
 	}
 	async _loadNormIndex() {
-		if (await this.init(), this.normEntries || (this.normEntries = /* @__PURE__ */ new Map(), this.normVectorIndex = {}, !Z(this.normLocator))) return this.normEntries;
+		return await this.init(), this.normEntries ? this.normEntries : this._share(this.pendingMetadata, "normIndex", () => this._parseNormIndex());
+	}
+	async _parseNormIndex() {
+		let e = /* @__PURE__ */ new Map(), t = {};
+		if (!X(this.normLocator)) return this.normVectorIndex = t, this.normEntries = e, e;
 		k(this.normLocator.length <= this.maxRecordBytes, "normalization index exceeds allocation limit");
-		let e = new N(await this._read(this.normLocator.position, this.normLocator.length), "normalization-vector index");
-		e.magic("NVI0"), k(e.u32() === 1, "unknown normalization-index version");
-		let t = e.u32();
-		e.zero(4);
-		let n;
-		for (let r = 0; r < t; r++) {
-			let t = e.u32();
-			k(t >= 40 && t - 4 <= e.available, "invalid normalization-index entry length");
-			let r = e.take(t - 4, "normalization-vector entry"), i = r.u32(), a = r.u32(), o = r.u8();
-			r.zero(3);
-			let s = r.u32(), c = r.u32(), l = A(r.u64(), "normalization-vector length"), u = r.u32(), d = r.u32();
-			k(i < this.normalizationNames.length && a < this.chromosomes.length && o <= B && s < this.resolutionRecords[o].length && c === this.resolutionRecords[o][s].binSize, "invalid normalization-vector key");
-			let f = [
-				i,
-				a,
+		let n = new N(await this._read(this.normLocator.position, this.normLocator.length), "normalization-vector index");
+		n.magic("NVI0"), k(n.u32() === 1, "unknown normalization-index version");
+		let r = n.u32();
+		n.zero(4);
+		let i;
+		for (let a = 0; a < r; a++) {
+			let r = n.u32();
+			k(r >= 40 && r - 4 <= n.available, "invalid normalization-index entry length");
+			let a = n.take(r - 4, "normalization-vector entry"), o = a.u32(), s = a.u32(), c = a.u8();
+			a.zero(3);
+			let l = a.u32(), u = a.u32(), d = A(a.u64(), "normalization-vector length"), f = a.u32(), p = a.u32();
+			k(o < this.normalizationNames.length && s < this.chromosomes.length && c <= B && l < this.resolutionRecords[c].length && u === this.resolutionRecords[c][l].binSize, "invalid normalization-vector key");
+			let m = [
 				o,
-				s
+				s,
+				c,
+				l
 			];
-			k(!n || se(n, f) < 0, "normalization-vector keys are unordered or duplicated"), n = f, k(l === this._binCount(a, o, s) && (l === 0 ? d === 0 : u > 0 && d > 0) && t === 40 + 32 * d, "invalid normalization-vector length/chunks");
-			let p = [], m = 0;
-			for (let e = 0; e < d; e++) {
-				let e = A(r.u64(), "vector chunk first index"), t = r.u32(), n = r.u8(), i = r.u8();
-				r.zero(2);
-				let a = A(r.u64(), "vector chunk position"), o = r.u32(), s = r.u32();
-				k(e === m && t > 0 && s === t * 4 && n <= 2 && i === 1 && o > 16 && M(a, o, "normalization chunk interval") <= this.fileSize, "invalid normalization-vector chunk descriptor"), m = M(m, t, "normalization-vector coverage"), k(m <= l, "normalization-vector chunk exceeds vector"), p.push({
+			k(!i || Z(i, m) < 0, "normalization-vector keys are unordered or duplicated"), i = m, k(d === this._binCount(s, c, l) && (d === 0 ? p === 0 : f > 0 && p > 0) && r === 40 + 32 * p, "invalid normalization-vector length/chunks");
+			let h = [], g = 0;
+			for (let e = 0; e < p; e++) {
+				let e = A(a.u64(), "vector chunk first index"), t = a.u32(), n = a.u8(), r = a.u8();
+				a.zero(2);
+				let i = A(a.u64(), "vector chunk position"), o = a.u32(), s = a.u32();
+				k(e === g && t > 0 && s === t * 4 && n <= 2 && r === 1 && o > 16 && M(i, o, "normalization chunk interval") <= this.fileSize, "invalid normalization-vector chunk descriptor"), g = M(g, t, "normalization-vector coverage"), k(g <= d, "normalization-vector chunk exceeds vector"), h.push({
 					firstValueIndex: e,
 					valueCount: t,
 					transform: n,
-					codec: i,
-					filePosition: a,
+					codec: r,
+					filePosition: i,
 					storedByteLength: o,
 					uncompressedByteLength: s
 				});
 			}
-			k(m === l, "normalization-vector chunks do not cover the vector"), r.done();
-			let h = {
-				normalizationTypeId: i,
-				chrIndex: a,
-				unit: o,
-				resolutionIndex: s,
-				binSize: c,
-				valueCount: l,
-				nominalChunkValueCount: u,
-				chunks: p
-			}, g = `${i}_${a}_${o}_${s}`;
-			this.normEntries.set(g, h);
-			let _ = `${this.normalizationNames[i]}_${a}_${Y(o)}_${c}`;
-			this.normVectorIndex[_] = {
+			k(g === d, "normalization-vector chunks do not cover the vector"), a.done();
+			let _ = {
+				normalizationTypeId: o,
+				chrIndex: s,
+				unit: c,
+				resolutionIndex: l,
+				binSize: u,
+				valueCount: d,
+				nominalChunkValueCount: f,
+				chunks: h
+			}, v = `${o}_${s}_${c}_${l}`;
+			e.set(v, _);
+			let y = `${this.normalizationNames[o]}_${s}_${J(c)}_${u}`;
+			t[y] = {
 				filePosition: this.normLocator.position,
-				size: t,
-				entry: h
+				size: r,
+				entry: _
 			};
 		}
-		return e.done(), this.normEntries;
+		return n.done(), this.normVectorIndex = t, this.normEntries = e, e;
 	}
 	async _loadExpectedIndex(e = !1) {
 		await this.init();
 		let t = e ? "normExpectedEntries" : "expectedEntries";
-		if (this[t]) return this[t];
-		let n = /* @__PURE__ */ new Map();
-		this[t] = n;
-		let r = e ? this.normExpectedLocator : this.expectedLocator;
-		if (!Z(r)) return n;
+		return this[t] ? this[t] : this._share(this.pendingMetadata, t, () => this._parseExpectedIndex(e, t));
+	}
+	async _parseExpectedIndex(e, t) {
+		let n = /* @__PURE__ */ new Map(), r = e ? this.normExpectedLocator : this.expectedLocator;
+		if (!X(r)) return this[t] = n;
 		k(r.length <= this.maxRecordBytes, "expected-value index exceeds allocation limit");
 		let i = new N(await this._read(r.position, r.length), e ? "normalized expected-value index" : "expected-value index");
 		i.magic(e ? "NEVI" : "EVI0"), k(i.u32() === 1, "unknown expected-value index version");
@@ -4678,7 +4731,7 @@ var de = class {
 				c,
 				l
 			] : [c, l];
-			k(!o || se(o, h) < 0, "expected-vector keys are unordered or duplicated"), o = h;
+			k(!o || Z(o, h) < 0, "expected-vector keys are unordered or duplicated"), o = h;
 			let g = 0;
 			for (let e = 0; e < this.chromosomes.length; e++) g = Math.max(g, this._binCount(e, c, l));
 			k(d === g && (d === 0 ? p === 0 : f > 0 && p > 0) && t === r + 8 * m + 32 * p, "invalid expected-vector length/chunks");
@@ -4715,29 +4768,38 @@ var de = class {
 			};
 			n.set(h.join("_"), x);
 		}
-		return i.done(), n;
+		return i.done(), this[t] = n, n;
 	}
 	async _readVectorChunk(e) {
-		let t = `${e.filePosition}_${e.storedByteLength}`;
-		if (this.vectorChunkCache.has(t)) return this.vectorChunkCache.get(t);
-		let n = new N(await this._read(e.filePosition, e.storedByteLength), "vector chunk");
-		n.magic("H10V"), k(n.u8() === e.codec && n.u8() === e.transform, "vector chunk codec/transform mismatch"), n.zero(2), k(n.u32() === e.uncompressedByteLength && n.u32() === e.valueCount, "vector chunk size mismatch");
-		let r = await R(n.bytes.subarray(n.position), e.uncompressedByteLength, this.maxRecordBytes), i = new Float32Array(e.valueCount), a = new DataView(r.buffer, r.byteOffset, r.byteLength), o = 0;
+		let t = `${e.filePosition}_${e.storedByteLength}_${e.valueCount}_${e.transform}_${e.codec}`;
+		return this.vectorChunkCache.has(t) ? this.vectorChunkCache.get(t) : this._share(this.pendingVectors, t, () => this._withBlockSlot(async () => {
+			let n = await this._loadVectorChunk(e);
+			return this.vectorChunkCache.set(t, n), n;
+		}, e.storedByteLength));
+	}
+	async _loadVectorChunk(e) {
+		let t = new N(await this._read(e.filePosition, e.storedByteLength), "vector chunk");
+		t.magic("H10V"), k(t.u8() === e.codec && t.u8() === e.transform, "vector chunk codec/transform mismatch"), t.zero(2), k(t.u32() === e.uncompressedByteLength && t.u32() === e.valueCount, "vector chunk size mismatch");
+		let n = await te(t.bytes.subarray(t.position), e.uncompressedByteLength, this.maxRecordBytes), r = new Float32Array(e.valueCount), i = new Uint32Array(r.buffer), a = new DataView(n.buffer, n.byteOffset, n.byteLength), o = 0;
 		for (let t = 0; t < e.valueCount; t++) {
-			let n;
-			e.transform === 1 ? (n = r[t] | r[e.valueCount + t] << 8 | r[2 * e.valueCount + t] << 16 | r[3 * e.valueCount + t] << 24, n >>>= 0) : (n = a.getUint32(t * 4, !0), e.transform === 2 && t > 0 && (n = (n ^ o) >>> 0)), o = n, i[t] = ee(n);
+			let r;
+			e.transform === 1 ? (r = n[t] | n[e.valueCount + t] << 8 | n[2 * e.valueCount + t] << 16 | n[3 * e.valueCount + t] << 24, r >>>= 0) : (r = a.getUint32(t * 4, !0), e.transform === 2 && t > 0 && (r = (r ^ o) >>> 0)), o = r, i[t] = r;
 		}
-		return this.vectorChunkCache.set(t, i), i;
+		return r;
 	}
 	async _readVectorValues(e, t, n) {
 		let r = Math.min(n, e.valueCount);
 		k(Number.isInteger(t) && Number.isInteger(r) && t >= 0 && t <= r, "invalid vector range");
-		let i = Array(r - t);
-		for (let n of e.chunks) {
-			let e = n.firstValueIndex + n.valueCount;
-			if (e <= t || n.firstValueIndex >= r) continue;
-			let a = await this._readVectorChunk(n), o = Math.max(t, n.firstValueIndex), s = Math.min(r, e);
-			for (let e = o; e < s; e++) i[e - t] = a[e - n.firstValueIndex];
+		let i = Array(r - t), a = 0, o = e.chunks.length;
+		for (; a < o;) {
+			let n = a + o >>> 1, r = e.chunks[n];
+			r.firstValueIndex + r.valueCount <= t ? a = n + 1 : o = n;
+		}
+		for (let n = a; n < e.chunks.length; n++) {
+			let a = e.chunks[n], o = a.firstValueIndex + a.valueCount;
+			if (a.firstValueIndex >= r) break;
+			let s = await this._readVectorChunk(a), c = Math.max(t, a.firstValueIndex), l = Math.min(r, o);
+			for (let e = c; e < l; e++) i[e - t] = s[e - a.firstValueIndex];
 		}
 		return i;
 	}
@@ -4753,10 +4815,10 @@ var de = class {
 		if (i < 0) return;
 		let a = Number.isInteger(t) ? t : this.chromosomeIndexMap[this.getFileChrName(t)];
 		if (a === void 0) return;
-		let o = J(n), s = this.resolutionRecords[o].findIndex((e) => e.binSize === r);
+		let o = q(n), s = this.resolutionRecords[o].findIndex((e) => e.binSize === r);
 		if (s < 0) return;
 		let c = (await this._loadNormIndex()).get(`${i}_${a}_${o}_${s}`);
-		return c ? new fe(this, c) : void 0;
+		return c ? new pe(this, c) : void 0;
 	}
 	async getExpectedValueVector(e, t, n, r) {
 		await this.init();
@@ -4764,12 +4826,12 @@ var de = class {
 		if (i && a < 0) return;
 		let o = Number.isInteger(t) ? t : this.chromosomeIndexMap[this.getFileChrName(t)];
 		if (o === void 0) return;
-		let s = J(n), c = this.resolutionRecords[s].findIndex((e) => e.binSize === r);
+		let s = q(n), c = this.resolutionRecords[s].findIndex((e) => e.binSize === r);
 		if (c < 0) return;
 		let l = await this._loadExpectedIndex(i), u = i ? `${a}_${s}_${c}` : `${s}_${c}`, d = l.get(u);
 		if (!d) return;
 		let f = d.scaleFactors.get(o) ?? 1;
-		return k(Number.isFinite(f) && f !== 0, "invalid expected-vector scale factor"), new pe(this, d, f);
+		return k(Number.isFinite(f) && f !== 0, "invalid expected-vector scale factor"), new me(this, d, f);
 	}
 	async getExpectedValues(e, t, n, r, i = 0, a) {
 		let o = await this.getExpectedValueVector(e, t, n, r);
@@ -4790,11 +4852,11 @@ var de = class {
 		for (let [n, r] of this.matrixLocators) r.length > e && (e = r.length, t = n);
 		console.log(`${e}  ${t}  ${this.config.url || ""}`);
 	}
-}, he = typeof process < "u" && process.versions != null && process.versions.node != null, ge = -32768, _e = 8, ve = 4, $ = 4, ye = class {
+}, ge = typeof process < "u" && process.versions != null && process.versions.node != null, _e = -32768, ve = 8, ye = 4, $ = 4, be = class {
 	constructor(e) {
-		if (e.alert && (this.alert = e.alert), this.config = e, this.loadFragData = e.loadFragData, this.fragmentSitesCache = {}, this.normVectorCache = new v(10), this.normalizationTypes = ["NONE"], this.matrixCache = new v(10), this.blockCache = new Se(), this.normVectorIndexPosition = -1, this.normVectorIndexSize = -1, e.file) this.file = e.file;
+		if (e.alert && (this.alert = e.alert), this.config = e, this.loadFragData = e.loadFragData, this.fragmentSitesCache = {}, this.normVectorCache = new v(10), this.normalizationTypes = ["NONE"], this.matrixCache = new v(10), this.blockCache = new Ce(), this.normVectorIndexPosition = -1, this.normVectorIndexSize = -1, e.file) this.file = e.file;
 		else if (e.blob) this.file = new s(e.blob);
-		else if (e.url || e.path && !he) this.url = e.url || this.path, this.remote = !0, this.file = new c(e);
+		else if (e.url || e.path && !ge) this.url = e.url || this.path, this.remote = !0, this.file = new c(e);
 		else if (e.path) throw Error("path property is deprecated, use NodeLocalFile");
 		else throw Error("Arguments must include file, blob, url, or path");
 	}
@@ -4817,7 +4879,7 @@ var de = class {
 		if (!e || e.byteLength === 0) throw Error("File content is empty");
 		let t = new f(new DataView(e));
 		if (this.magic = t.getString(), this.version = t.getInt(), this.version < 5) throw Error("Unsupported hic version: " + this.version);
-		if (this.version === 10) return this.v10 ||= new me({
+		if (this.version === 10) return this.v10 ||= new he({
 			...this.config,
 			file: this.file
 		}), await this.v10.init(), this._syncV10Properties(), this;
@@ -4878,7 +4940,7 @@ var de = class {
 	}
 	async readFooter() {
 		if (this.version === void 0) return await this.init(), this.version === 10 ? this.v10 : this;
-		if (this.version === 10) return this.v10 ||= new me({
+		if (this.version === 10) return this.v10 ||= new he({
 			...this.config,
 			file: this.file
 		}), await this.v10.init(), this._syncV10Properties(), this.v10.readFooter();
@@ -5008,12 +5070,12 @@ var de = class {
 							isNaN(e) || s.push(new _(c, l, e));
 						} else {
 							let e = a.getShort();
-							e != ge && s.push(new _(c, l, e));
+							e != _e && s.push(new _(c, l, e));
 						}
 					}
 				} else throw Error("Unknown block type: " + o);
 			}
-			return new xe(e, t, s, n);
+			return new Se(e, t, s, n);
 		} else return;
 	}
 	async hasNormalizationVector(e, t, n, r) {
@@ -5024,7 +5086,7 @@ var de = class {
 			let e = this.getFileChrName(t);
 			i = this.chromosomeIndexMap[e];
 		}
-		let a = be(e, i, n.toString(), r), o = await this.getNormVectorIndex();
+		let a = xe(e, i, n.toString(), r), o = await this.getNormVectorIndex();
 		return o && o[a];
 	}
 	async isNormalizationValueAvailableAtResolution(e, t, n, r) {
@@ -5035,7 +5097,7 @@ var de = class {
 			let e = this.getFileChrName(t);
 			i = this.chromosomeIndexMap[e];
 		}
-		return (await this.getNormVectorIndex())[be(e, i, n.toString(), r)] !== void 0;
+		return (await this.getNormVectorIndex())[xe(e, i, n.toString(), r)] !== void 0;
 	}
 	async getNormalizationVector(e, t, n, r) {
 		if (await this.init(), this.version === 10) return this.v10.getNormalizationVector(e, t, n, r);
@@ -5045,7 +5107,7 @@ var de = class {
 			let e = this.getFileChrName(t);
 			i = this.chromosomeIndexMap[e];
 		}
-		let a = be(e, i, n.toString(), r);
+		let a = xe(e, i, n.toString(), r);
 		if (this.normVectorCache.has(a)) return this.normVectorCache.get(a);
 		let o = await this.getNormVectorIndex();
 		if (!o) {
@@ -5059,7 +5121,7 @@ var de = class {
 		}
 		let s = o[a], c = await this.file.read(s.filePosition, 8);
 		if (!c) return;
-		let l = new f(new DataView(c)), u = this.version < 9 ? l.getInt() : l.getLong(), d = this.version < 9 ? _e : ve, p = this.version < 9 ? s.filePosition + 4 : s.filePosition + 8, m = new b(this.file, p, u, d);
+		let l = new f(new DataView(c)), u = this.version < 9 ? l.getInt() : l.getLong(), d = this.version < 9 ? ve : ye, p = this.version < 9 ? s.filePosition + 4 : s.filePosition + 8, m = new b(this.file, p, u, d);
 		return this.normVectorCache.set(a, m), m;
 	}
 	async getExpectedValueVector(e, t, n, r) {
@@ -5152,12 +5214,12 @@ var de = class {
 			}, a = 0, s = e, c = await n.read(i.start, i.size), l = new f(new DataView(c));
 			l.getString(), l.getString(), l.getInt();
 			let u = t < 9 ? l.getInt() : l.getLong();
-			a += l.position + u * (t < 9 ? _e : ve), i = {
+			a += l.position + u * (t < 9 ? ve : ye), i = {
 				start: e + a,
 				size: $
 			}, c = await n.read(i.start, i.size), l = new f(new DataView(c));
 			let d = l.getInt();
-			return a += $ + d * ($ + (t < 9 ? _e : ve)), r--, r === 0 ? s + a : o(s + a, r);
+			return a += $ + d * ($ + (t < 9 ? ve : ye)), r--, r === 0 ? s + a : o(s + a, r);
 		}
 	}
 	getZoomIndexForBinSize(e, t) {
@@ -5180,14 +5242,14 @@ var de = class {
 		return this.chrAliasTable.hasOwnProperty(e) ? this.chrAliasTable[e] : e;
 	}
 };
-function be(e, t, n, r) {
+function xe(e, t, n, r) {
 	return e + "_" + t + "_" + n + "_" + r;
 }
-var xe = class {
+var Se = class {
 	constructor(e, t, n, r) {
 		this.blockNumber = e, this.zoomData = t, this.records = n, this.idx = r;
 	}
-}, Se = class {
+}, Ce = class {
 	constructor() {
 		this.resolution = void 0, this.map = new v(6);
 	}
@@ -5200,9 +5262,9 @@ var xe = class {
 	has(e, t) {
 		return this.resolution === e && this.map.has(t);
 	}
-}, Ce = class {
+}, we = class {
 	constructor(e) {
-		this.config = e, e.liveContactMap ? this.hicFile = e.liveContactMap : this.hicFile = new ye(e);
+		this.config = e, e.liveContactMap ? this.hicFile = e.liveContactMap : this.hicFile = new be(e);
 	}
 	async getMetaData() {
 		return await this.hicFile.getMetaData();
@@ -5231,7 +5293,7 @@ var xe = class {
 };
 //#endregion
 //#region src/swtParser.js
-function we(e) {
+function Te(e) {
 	let t = e.split(/\r?\n/), n = t[0];
 	if (!n || !n.startsWith("##format=sw1")) throw Error("Invalid SWT format: expected ##format=sw1 header");
 	let r = n.split(/\s+/), i, a;
@@ -5271,12 +5333,12 @@ function we(e) {
 		traces: o
 	};
 }
-async function Te({ hdf5: e, ensembleGroupKey: t }) {
+async function Ee({ hdf5: e, ensembleGroupKey: t }) {
 	if (!e) throw Error("loadLiveVertices requires an open hdf5 handle");
 	if (!t) throw Error("loadLiveVertices requires ensembleGroupKey");
-	return await Ee(e, t) || ke(e, t);
+	return await De(e, t) || Ae(e, t);
 }
-async function Ee(e, t) {
+async function De(e, t) {
 	let n = await e.get(t);
 	if (!n || !(await n.keys).includes("live_contact_map_vertices")) return null;
 	let r = await e.get("/Header"), i = (r ? await r.attrs : {}).live_contact_map_vertices_version;
@@ -5286,12 +5348,12 @@ async function Ee(e, t) {
 	let s, c;
 	if (o.length === 3 && o[2] === 3) s = o[0], c = o[1];
 	else if (o.length === 2 && o[1] === 3) {
-		if (c = await De(n), !c || o[0] % c !== 0) return null;
+		if (c = await Oe(n), !c || o[0] % c !== 0) return null;
 		s = o[0] / c;
 	} else return null;
-	return Oe(await a.value, s, c);
+	return ke(await a.value, s, c);
 }
-async function De(e) {
+async function Oe(e) {
 	let t = await e.get("genomic_position/regions");
 	if (!t) return null;
 	let n = await t.shape;
@@ -5299,7 +5361,7 @@ async function De(e) {
 	let r = n.reduce((e, t) => e * t, 1);
 	return r % 3 == 0 ? r / 3 : null;
 }
-function Oe(e, t, n) {
+function ke(e, t, n) {
 	let r = Array(t), i = 0;
 	for (let a = 0; a < t; a++) {
 		let t = Array(n);
@@ -5315,7 +5377,7 @@ function Oe(e, t, n) {
 	}
 	return r;
 }
-async function ke(e, t) {
+async function Ae(e, t) {
 	let n = await e.get(`${t}/spatial_position`);
 	if (!n) throw Error(`SW file missing ${t}/spatial_position`);
 	let r = (await n.keys).filter((e) => /^t_\d+$/.test(e)).sort((e, t) => parseInt(e.slice(2), 10) - parseInt(t.slice(2), 10));
@@ -5323,11 +5385,11 @@ async function ke(e, t) {
 	let i = [];
 	for (let e of r) {
 		let t = await (await n.get(e)).value;
-		i.push(Ae(t));
+		i.push(je(t));
 	}
 	return i;
 }
-function Ae(e) {
+function je(e) {
 	if (e.length % 3 != 0) throw Error(`loadLiveVertices: spatial_position/t_* length ${e.length} is not a multiple of 3 — legacy pointcloud file with no live_contact_map_vertices bake; re-export with current swtool`);
 	let t = Array(e.length / 3);
 	for (let n = 0, r = 0; n < e.length; n += 3, r++) {
@@ -5342,7 +5404,7 @@ function Ae(e) {
 }
 //#endregion
 //#region src/swParser.js
-async function je({ file: e, url: n, path: r } = {}) {
+async function Me({ file: e, url: n, path: r } = {}) {
 	if (!e && !n && !r) throw Error("parseSW requires one of: file, url, path");
 	let i = await t({
 		...e ? { file: e } : n ? { url: n } : { path: r },
@@ -5360,7 +5422,7 @@ async function je({ file: e, url: n, path: r } = {}) {
 	if (f.length < 3 || f.length % 3 != 0) throw Error(`SW regions dataset has invalid length ${f.length}`);
 	let p = String(f[0]);
 	for (let e = 3; e < f.length; e += 3) if (String(f[e]) !== p) throw Error(`SW file spans multiple chromosomes (${p}, ${f[e]}); V1 supports a single-locus file`);
-	let m = f.length / 3, h = parseInt(f[1], 10), g = parseInt(f[f.length - 1], 10), _ = await Te({
+	let m = f.length / 3, h = parseInt(f[1], 10), g = parseInt(f[f.length - 1], 10), _ = await Ee({
 		hdf5: i,
 		ensembleGroupKey: u
 	}), v = _[0].length;
@@ -5378,7 +5440,7 @@ async function je({ file: e, url: n, path: r } = {}) {
 		traces: _
 	};
 }
-function Me(e, t) {
+function Ne(e, t) {
 	let n = t, r = new Float64Array(n * n), i = new Uint32Array(n * n);
 	for (let t of e) for (let e = 0; e < n; e++) {
 		let a = t[e];
@@ -5409,7 +5471,7 @@ function Me(e, t) {
 }
 //#endregion
 //#region src/contactDerivation.js
-function Ne(e, t, n) {
+function Pe(e, t, n) {
 	let r = [];
 	for (let i = 0; i < t; i++) {
 		r.push(new _(i, i, 1));
@@ -5420,7 +5482,7 @@ function Ne(e, t, n) {
 	}
 	return r;
 }
-function Pe(e, t, n) {
+function Fe(e, t, n) {
 	let r = t, i = new Uint32Array(r * r), a = new Uint32Array(r * r);
 	for (let t of e) for (let e = 0; e < r; e++) {
 		let o = t[e];
@@ -5451,7 +5513,7 @@ function Pe(e, t, n) {
 }
 //#endregion
 //#region src/liveContactMap.js
-var Fe = {
+var Ie = {
 	hg38: {
 		chr1: 248956422,
 		chr2: 242193529,
@@ -5504,7 +5566,7 @@ var Fe = {
 		chrX: 155270560,
 		chrY: 59373566
 	}
-}, Ie = .35, Le = class {
+}, Le = .35, Re = class {
 	constructor(e, t, n) {
 		this.chr1 = e, this.chr2 = t, this._zoomData = n;
 	}
@@ -5517,7 +5579,7 @@ var Fe = {
 	findZoomForResolution(e, t) {
 		return 0;
 	}
-}, Re = class {
+}, ze = class {
 	constructor(e) {
 		this.config = e, this.initialized = !1;
 	}
@@ -5525,16 +5587,16 @@ var Fe = {
 		if (this.initialized) return;
 		let e = this.config, t, n, r, i, a, o, s;
 		if (e.swtText) {
-			let c = we(e.swtText);
+			let c = Te(e.swtText);
 			t = c.traces, n = e.genomeId || c.genomeId, r = e.chr || c.chr, i = e.genomicStart === void 0 ? c.genomicStart : e.genomicStart, a = e.genomicEnd === void 0 ? c.genomicEnd : e.genomicEnd, o = e.binSize || c.binSize, s = c.traceLength, c.sample;
 		} else if (e.swFile || e.swUrl || e.swPath) {
-			let c = await je({
+			let c = await Me({
 				file: e.swFile,
 				url: e.swUrl,
 				path: e.swPath
 			});
 			t = c.traces, n = e.genomeId || c.genomeId, r = e.chr || c.chr, i = e.genomicStart === void 0 ? c.genomicStart : e.genomicStart, a = e.genomicEnd === void 0 ? c.genomicEnd : e.genomicEnd, o = e.binSize || c.binSize, s = c.traceLength, c.sample;
-		} else if (e.hdf5 && e.ensembleGroupKey) t = await Te({
+		} else if (e.hdf5 && e.ensembleGroupKey) t = await Ee({
 			hdf5: e.hdf5,
 			ensembleGroupKey: e.ensembleGroupKey
 		}), n = e.genomeId, r = e.chr, i = e.genomicStart, a = e.genomicEnd, o = e.binSize, s = e.traceLength || t[0].length, e.name;
@@ -5545,7 +5607,7 @@ var Fe = {
 		else throw Error("LiveContactMap requires swtText, swFile/swUrl/swPath, hdf5+ensembleGroupKey, parsedData, or traces in config");
 		if (this.traces = t, this.traceLength = s, this.binSize = o, this.genomicStart = i, this.genomicEnd = a, this.distanceThreshold = e.distanceThreshold, this.contactMode = e.contactMode || "frequency", this.binOffset = Math.floor(i / o), this.genomeId = n, this.version = 0, e.chromosomes) this.chromosomes = e.chromosomes;
 		else {
-			let e, t = Fe[n];
+			let e, t = Ie[n];
 			e = t && t[r] ? t[r] : a, this.chromosomes = [{
 				index: 0,
 				name: "All",
@@ -5566,7 +5628,7 @@ var Fe = {
 			genome: this.genomeId,
 			chromosomes: this.chromosomes,
 			resolutions: this.bpResolutions
-		}, this._computeDistances(), this.distanceThreshold === void 0 && (this.distanceThreshold = this._computeDefaultThreshold(Ie)), this._deriveContacts(), this.initialized = !0;
+		}, this._computeDistances(), this.distanceThreshold === void 0 && (this.distanceThreshold = this._computeDefaultThreshold(Le)), this._deriveContacts(), this.initialized = !0;
 	}
 	async getMetaData() {
 		return await this.init(), this.meta;
@@ -5584,7 +5646,7 @@ var Fe = {
 		let i = 0;
 		for (let e of this.contactRecords) i += e.counts;
 		let a = this.traceLength, o = a > 0 ? i / (a * a) : 0;
-		return new Le(n, r, {
+		return new Re(n, r, {
 			chr1: n,
 			chr2: r,
 			zoom: {
@@ -5628,7 +5690,7 @@ var Fe = {
 		return this.contactFrequencies;
 	}
 	_computeDistances() {
-		let e = Me(this.traces, this.traceLength);
+		let e = Ne(this.traces, this.traceLength);
 		this.distanceMatrix = e.distances, this.maxDistance = e.maxDistance;
 	}
 	_computeDefaultThreshold(e) {
@@ -5642,14 +5704,14 @@ var Fe = {
 	_deriveContacts() {
 		let e;
 		if (this.contactMode === "frequency") {
-			let t = Pe(this.traces, this.traceLength, this.distanceThreshold);
+			let t = Fe(this.traces, this.traceLength, this.distanceThreshold);
 			e = t.contactRecords, this.contactFrequencies = t.contactFrequencies;
-		} else e = Ne(this.distanceMatrix, this.traceLength, this.distanceThreshold), this.contactFrequencies = void 0;
+		} else e = Pe(this.distanceMatrix, this.traceLength, this.distanceThreshold), this.contactFrequencies = void 0;
 		let t = this.binOffset;
 		t === 0 ? this.contactRecords = e : this.contactRecords = e.map((e) => new _(e.bin1 + t, e.bin2 + t, e.counts));
 	}
-}, ze = Ce;
+}, Be = we;
 //#endregion
-export { Re as LiveContactMap, ze as default };
+export { ze as LiveContactMap, Be as default };
 
 //# sourceMappingURL=hic-straw.esm.js.map

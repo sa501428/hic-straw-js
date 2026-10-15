@@ -94,6 +94,10 @@ class V10Cursor {
     }
 
     uleb128() {
+        // Most counts and deltas fit in one byte. Avoid the BigInt shift loop
+        // for this common case while keeping the public uint64 result exact.
+        this.need(1)
+        if (this.bytes[this.position] < 128) return BigInt(this.bytes[this.position++])
         let value = 0n
         let shift = 0n
         let count = 0
@@ -110,6 +114,24 @@ class V10Cursor {
         requireV10(value <= UINT64_MAX, 'ULEB128 overflows uint64')
         requireV10(count === 1 || value >= (1n << BigInt(7 * (count - 1))), 'non-canonical ULEB128')
         return value
+    }
+
+    uleb128Number() {
+        // Positions are bounded by the allocated block geometry, and therefore
+        // must fit a safe integer. Decode those without constructing BigInts.
+        let value = 0
+        let multiplier = 1
+        for (let count = 0; count < 8; count++) {
+            const byte = this.u8()
+            value += (byte & 0x7f) * multiplier
+            requireV10(Number.isSafeInteger(value), 'ULEB128 exceeds the JavaScript safe integer range')
+            if (!(byte & 0x80)) {
+                requireV10(count === 0 || (byte & 0x7f) !== 0, 'non-canonical ULEB128')
+                return value
+            }
+            multiplier *= 128
+        }
+        throw new V10FormatError('ULEB128 exceeds the JavaScript safe integer range')
     }
 
     magic(expected) {
@@ -161,11 +183,10 @@ class V10Cursor {
     }
 }
 
+const floatBits = new DataView(new ArrayBuffer(4))
 function floatFromBits(bits) {
-    const buffer = new ArrayBuffer(4)
-    const view = new DataView(buffer)
-    view.setUint32(0, bits >>> 0, true)
-    return view.getFloat32(0, true)
+    floatBits.setUint32(0, bits >>> 0, true)
+    return floatBits.getFloat32(0, true)
 }
 
 export {

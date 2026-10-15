@@ -1,7 +1,6 @@
 import {allOverview} from './allOverview.js'
 import {RecordBlock, ByteCache} from './recordBlock.js'
 import ContactRecord from '../contactRecord.js'
-import LRU from '../lru.js'
 import {MAX_SAFE_BIGINT, UINT64_MAX, V10Cursor, checkedAdd, checkedNumberAdd, floatFromBits, requireV10,
     toSafeNumber} from './binary.js'
 import {decompressZstd} from './zstd.js'
@@ -64,6 +63,10 @@ function lowerBound(entries, blockNumber) {
 }
 
 function depthForDistance(distance, blockBinCount) {
+    const logarithm = Math.log2(1 + distance / (Math.SQRT2 * blockBinCount))
+    // Away from an integer boundary the floating-point result is unambiguous.
+    // Retain the exact integer comparison at the distance-band boundaries.
+    if (Math.abs(logarithm - Math.round(logarithm)) > 1e-12) return Math.floor(logarithm)
     const d = BigInt(distance)
     const b = BigInt(blockBinCount)
     const quotient = (d * d) / (2n * b * b)
@@ -192,10 +195,12 @@ class V10HicFile {
         this.blockIndexCache = new Map()
         this.blockCache = new ByteCache(config.v10BlockCacheSize ?? 24, config.v10BlockCacheBytes ?? 256 * 1024 * 1024)
         this.derivedBlockCache = new ByteCache(config.v10DerivedBlockCacheSize ?? 24, config.v10DerivedBlockCacheBytes ?? 64 * 1024 * 1024)
-        this.vectorChunkCache = new LRU(config.v10VectorChunkCacheSize || 12)
+        this.vectorChunkCache = new ByteCache(config.v10VectorChunkCacheSize ?? 64,
+            config.v10VectorChunkCacheBytes ?? 32 * 1024 * 1024)
         this.maxRecordBytes = config.v10MaxRecordBytes || 512 * 1024 * 1024
         this.pendingBlocks = new Map()
         this.pendingMetadata = new Map()
+        this.pendingVectors = new Map()
         this.blockLoadConcurrency = config.v10ReadConcurrency ?? 2
         requireV10(Number.isInteger(this.blockLoadConcurrency) && this.blockLoadConcurrency >= 1 && this.blockLoadConcurrency <= 8,
             'block read concurrency must be an integer from 1 to 8')
@@ -635,8 +640,46 @@ class V10HicFile {
         }, entry.storedByteLength))
     }
 
-    async _loadBlock(entry, zoom, chr1, chr2) {
-        const cursor = new V10Cursor(await this._read(entry.blockPosition, entry.storedByteLength), 'stored block')
+    _prefetchBlocks(entries, zoom, chr1, chr2) {
+        const keyFor = entry => `${entry.blockPosition}_${entry.storedByteLength}_${zoom.unit}_${zoom.resolutionIndex}_${zoom.valueType}`
+        const missing = entries.filter(entry => !this.blockCache.has(keyFor(entry)) && !this.pendingBlocks.has(keyFor(entry)))
+            .sort((a, b) => a.blockPosition - b.blockPosition)
+        for (let from = 0; from < missing.length;) {
+            let to = from + 1
+            const position = missing[from].blockPosition
+            let end = position + missing[from].storedByteLength
+            while (to < missing.length && missing[to].blockPosition === end &&
+                end + missing[to].storedByteLength - position <= this.blockReadAheadBytes) {
+                end += missing[to++].storedByteLength
+            }
+            if (to - from > 1) {
+                const group = missing.slice(from, to)
+                const load = this._withBlockSlot(async () => {
+                    const bytes = await this._read(position, end - position)
+                    const blocks = []
+                    for (const entry of group) {
+                        const offset = entry.blockPosition - position
+                        const records = await this._loadBlock(entry, zoom, chr1, chr2,
+                            bytes.subarray(offset, offset + entry.storedByteLength))
+                        this.blockCache.set(keyFor(entry), records)
+                        blocks.push(records)
+                    }
+                    return blocks
+                }, end - position)
+                group.forEach((entry, i) => {
+                    const key = keyFor(entry)
+                    const promise = load.then(blocks => blocks[i]).finally(() => this.pendingBlocks.delete(key))
+                    promise.catch(() => {})
+                    this.pendingBlocks.set(key, promise)
+                })
+            }
+            from = to
+        }
+        return entries.map(entry => this._readBlock(entry, zoom, chr1, chr2))
+    }
+
+    async _loadBlock(entry, zoom, chr1, chr2, bytes) {
+        const cursor = new V10Cursor(bytes ?? await this._read(entry.blockPosition, entry.storedByteLength), 'stored block')
         cursor.magic('H10B')
         requireV10(cursor.u8() === 1 && cursor.u8() === 1, 'unknown stored-block codec/version')
         cursor.zero(2)
@@ -730,13 +773,13 @@ class V10HicFile {
         let consumed = 0
         if (representation === SPARSE_DELTA) {
             requireV10(flags === 0 && occupied <= positionBytes, 'invalid sparse position stream')
-            let previous = 0n
+            let previous = 0
             for (let i = 0; i < occupied; i++) {
-                const delta = positions.uleb128()
-                requireV10(i === 0 || delta > 0n, 'duplicate sparse position')
-                const position = i === 0 ? delta : checkedAdd(previous, delta, 'sparse position')
-                requireV10(position < cellsBig, 'sparse position is out of range')
-                emit(toSafeNumber(position, 'sparse position'), valueAt(i))
+                const delta = positions.uleb128Number()
+                requireV10(i === 0 || delta > 0, 'duplicate sparse position')
+                const position = previous + delta
+                requireV10(Number.isSafeInteger(position) && position < cells, 'sparse position is out of range')
+                emit(position, valueAt(i))
                 previous = position
                 consumed++
             }
@@ -837,10 +880,12 @@ class V10HicFile {
         const entries = [...selected.values()]
         const loads = new Map()
         const start = i => {
-            if (i >= entries.length) return
-            const load = this._readBlock(entries[i], zoom, matrix.chr1, matrix.chr2)
-            load.catch(() => {}) // a later prefetched failure is consumed below
-            loads.set(i, load)
+            if (i >= entries.length || loads.has(i)) return
+            const batch = entries.slice(i, i + this.blockLoadConcurrency)
+            this._prefetchBlocks(batch, zoom, matrix.chr1, matrix.chr2).forEach((load, j) => {
+                load.catch(() => {}) // a later prefetched failure is consumed below
+                loads.set(i + j, load)
+            })
         }
         for (let i = 0; i < Math.min(entries.length, this.blockLoadConcurrency); i++) start(i)
         try {
@@ -848,7 +893,7 @@ class V10HicFile {
                 const entry = entries[block]
                 const records = await loads.get(block)
                 loads.delete(block)
-                start(block + this.blockLoadConcurrency)
+                if (loads.size < this.blockLoadConcurrency) start(block + loads.size + 1)
                 // The decoder validates strictly unique positions within each block,
                 // and verifies every cell's deterministic block number. Together
                 // with the unique block index, this also proves uniqueness across
@@ -862,9 +907,28 @@ class V10HicFile {
                 const projected = projection && this._projectBlock(records, entry, zoom, projection)
                 const visible = projected || records
                 const factor = projected ? projection.binSize / zoom.binSize : 1
-                for (let i = 0; i < visible.length; i++) {
-                    const x = visible.x[i], y = visible.y[i]
-                    if (inside(x * factor, y * factor)) callback(visible.recordAt(i), Boolean(projected))
+                // Decoded positions and projected rows are ordered by y. Locate
+                // the viewport's rows instead of rescanning a multi-million-cell
+                // source block on every small pan or cached redraw.
+                const rowStart = value => {
+                    let lo = 0, hi = visible.length
+                    while (lo < hi) {
+                        const mid = (lo + hi) >>> 1
+                        if (visible.y[mid] < value) lo = mid + 1
+                        else hi = mid
+                    }
+                    return lo
+                }
+                const rows = [[rowStart(y0 / factor), rowStart(y1 / factor)]]
+                if (matrix.chr1 === matrix.chr2) rows.push([rowStart(x0 / factor), rowStart(x1 / factor)])
+                rows.sort((a, b) => a[0] - b[0])
+                let previousEnd = 0
+                for (const [begin, end] of rows) {
+                    for (let i = Math.max(begin, previousEnd); i < end; i++) {
+                        const x = visible.x[i], y = visible.y[i]
+                        if (inside(x * factor, y * factor)) callback(visible.recordAt(i), Boolean(projected))
+                    }
+                    previousEnd = Math.max(previousEnd, end)
                 }
             }
         } finally {
@@ -960,19 +1024,22 @@ class V10HicFile {
         if (!matrix) return []
         const zoom = matrix.getZoomData(binSize, units)
         requireV10(zoom, `matrix has no ${units} resolution ${binSize}`)
-        const raw = await this._raw(matrix, zoom, first.start, first.end, second.start, second.end)
-
         const normalized = normalization && normalization !== 'NONE'
-        let vector1
-        let vector2
-        if (normalized && matrixType !== 'expected') {
-            const nv1 = await this.getNormalizationVector(normalization, chr1, units, binSize)
-            const nv2 = chr1 === chr2 ? nv1 : await this.getNormalizationVector(normalization, chr2, units, binSize)
-            if (nv1 && nv2) {
-                vector1 = await nv1.getValues(first.start, first.end)
-                vector2 = await nv2.getValues(second.start, second.end)
-            }
-        }
+        const [raw, [vector1, vector2]] = await Promise.all([
+            this._raw(matrix, zoom, first.start, first.end, second.start, second.end),
+            (async () => {
+                if (!normalized || matrixType === 'expected') return []
+                const [nv1, nv2] = await Promise.all([
+                    this.getNormalizationVector(normalization, chr1, units, binSize),
+                    this.getNormalizationVector(normalization, chr2, units, binSize)
+                ])
+                if (!nv1 || !nv2) return []
+                const firstValues = nv1.getValues(first.start, first.end)
+                const secondValues = chr1 === chr2 && first.start === second.start && first.end === second.end
+                    ? firstValues : nv2.getValues(second.start, second.end)
+                return Promise.all([firstValues, secondValues])
+            })()
+        ])
         const applyNormalization = normalized && matrixType !== 'expected' && vector1 && vector2
         if (normalized && matrixType !== 'expected') {
             requireV10(applyNormalization, `normalization ${normalization} is unavailable at ${binSize}`)
@@ -1084,9 +1151,17 @@ class V10HicFile {
     async _loadNormIndex() {
         await this.init()
         if (this.normEntries) return this.normEntries
-        this.normEntries = new Map()
-        this.normVectorIndex = {}
-        if (!locatorPresent(this.normLocator)) return this.normEntries
+        return this._share(this.pendingMetadata, 'normIndex', () => this._parseNormIndex())
+    }
+
+    async _parseNormIndex() {
+        const entries = new Map()
+        const normVectorIndex = {}
+        if (!locatorPresent(this.normLocator)) {
+            this.normVectorIndex = normVectorIndex
+            this.normEntries = entries
+            return entries
+        }
         requireV10(this.normLocator.length <= this.maxRecordBytes, 'normalization index exceeds allocation limit')
         const cursor = new V10Cursor(await this._read(this.normLocator.position, this.normLocator.length),
             'normalization-vector index')
@@ -1146,22 +1221,27 @@ class V10HicFile {
             const entry = {normalizationTypeId, chrIndex, unit, resolutionIndex, binSize, valueCount,
                 nominalChunkValueCount, chunks}
             const key = `${normalizationTypeId}_${chrIndex}_${unit}_${resolutionIndex}`
-            this.normEntries.set(key, entry)
+            entries.set(key, entry)
             const legacyKey = `${this.normalizationNames[normalizationTypeId]}_${chrIndex}_${unitName(unit)}_${binSize}`
-            this.normVectorIndex[legacyKey] = {filePosition: this.normLocator.position, size: entryLength, entry}
+            normVectorIndex[legacyKey] = {filePosition: this.normLocator.position, size: entryLength, entry}
         }
         cursor.done()
-        return this.normEntries
+        this.normVectorIndex = normVectorIndex
+        this.normEntries = entries
+        return entries
     }
 
     async _loadExpectedIndex(normalized = false) {
         await this.init()
         const cacheName = normalized ? 'normExpectedEntries' : 'expectedEntries'
         if (this[cacheName]) return this[cacheName]
+        return this._share(this.pendingMetadata, cacheName, () => this._parseExpectedIndex(normalized, cacheName))
+    }
+
+    async _parseExpectedIndex(normalized, cacheName) {
         const entries = new Map()
-        this[cacheName] = entries
         const loc = normalized ? this.normExpectedLocator : this.expectedLocator
-        if (!locatorPresent(loc)) return entries
+        if (!locatorPresent(loc)) return (this[cacheName] = entries)
         requireV10(loc.length <= this.maxRecordBytes, 'expected-value index exceeds allocation limit')
         const cursor = new V10Cursor(await this._read(loc.position, loc.length),
             normalized ? 'normalized expected-value index' : 'expected-value index')
@@ -1241,12 +1321,21 @@ class V10HicFile {
             entries.set(keyArray.join('_'), entry)
         }
         cursor.done()
+        this[cacheName] = entries
         return entries
     }
 
     async _readVectorChunk(chunk) {
-        const key = `${chunk.filePosition}_${chunk.storedByteLength}`
+        const key = `${chunk.filePosition}_${chunk.storedByteLength}_${chunk.valueCount}_${chunk.transform}_${chunk.codec}`
         if (this.vectorChunkCache.has(key)) return this.vectorChunkCache.get(key)
+        return this._share(this.pendingVectors, key, () => this._withBlockSlot(async () => {
+            const values = await this._loadVectorChunk(chunk)
+            this.vectorChunkCache.set(key, values)
+            return values
+        }, chunk.storedByteLength))
+    }
+
+    async _loadVectorChunk(chunk) {
         const cursor = new V10Cursor(await this._read(chunk.filePosition, chunk.storedByteLength), 'vector chunk')
         cursor.magic('H10V')
         requireV10(cursor.u8() === chunk.codec && cursor.u8() === chunk.transform,
@@ -1257,6 +1346,7 @@ class V10HicFile {
         const transformed = await decompressZstd(cursor.bytes.subarray(cursor.position),
             chunk.uncompressedByteLength, this.maxRecordBytes)
         const output = new Float32Array(chunk.valueCount)
+        const words = new Uint32Array(output.buffer)
         const view = new DataView(transformed.buffer, transformed.byteOffset, transformed.byteLength)
         let previous = 0
         for (let i = 0; i < chunk.valueCount; i++) {
@@ -1271,9 +1361,8 @@ class V10HicFile {
                 if (chunk.transform === 2 && i > 0) bits = (bits ^ previous) >>> 0
             }
             previous = bits
-            output[i] = floatFromBits(bits)
+            words[i] = bits
         }
-        this.vectorChunkCache.set(key, output)
         return output
     }
 
@@ -1282,9 +1371,17 @@ class V10HicFile {
         requireV10(Number.isInteger(begin) && Number.isInteger(last) && begin >= 0 && begin <= last,
             'invalid vector range')
         const result = new Array(last - begin)
-        for (const chunk of entry.chunks) {
+        let lo = 0, hi = entry.chunks.length
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1
+            const chunk = entry.chunks[mid]
+            if (chunk.firstValueIndex + chunk.valueCount <= begin) lo = mid + 1
+            else hi = mid
+        }
+        for (let i = lo; i < entry.chunks.length; i++) {
+            const chunk = entry.chunks[i]
             const chunkEnd = chunk.firstValueIndex + chunk.valueCount
-            if (chunkEnd <= begin || chunk.firstValueIndex >= last) continue
+            if (chunk.firstValueIndex >= last) break
             const values = await this._readVectorChunk(chunk)
             const from = Math.max(begin, chunk.firstValueIndex)
             const to = Math.min(last, chunkEnd)

@@ -164,3 +164,32 @@ describe('V10 read-ahead memory bounds', () => {
         expect(wire.activeBlockLoads).toBe(0); expect(wire.activeBlockBytes).toBe(0)
     })
 })
+
+describe('V10 vector and adjacent-range reuse', () => {
+    it('shares complete indexes and vector chunks between concurrent normalized O/E queries', async () => {
+        const file = new MemoryFile(createV10Fixture({expected: true}))
+        const read = vi.spyOn(file, 'read')
+        const wire = new V10HicFile({file})
+        const queries = await Promise.all(Array.from({length: 6}, () =>
+            wire.getContactRecords('VC', region(), region(), 'BP', 20, 'oe')))
+        queries.forEach(records => expect(triples(records)).toEqual(triples(queries[0])))
+        expect(queries[0]).toHaveLength(3)
+        const intervals = read.mock.calls.map(([p, n]) => `${p}:${n}`)
+        expect(new Set(intervals).size).toBe(intervals.length)
+        expect(wire.pendingVectors.size).toBe(0)
+    })
+
+    it('fetches adjacent requested blocks together and shares their in-flight results', async () => {
+        const file = {read: vi.fn(async (p, n) => new ArrayBuffer(n))}
+        const wire = new V10HicFile({file})
+        const zoom = {unit: 0, resolutionIndex: 0, valueType: 0}
+        const entries = [0, 1].map(i => ({blockNumber: i, blockPosition: 100 + 50 * i, storedByteLength: 50}))
+        vi.spyOn(wire, '_loadBlock').mockImplementation(async entry => packed([[entry.blockNumber, 0, 1n]]))
+        const reads = wire._prefetchBlocks(entries, zoom, 0, 1)
+        const same = wire._readBlock(entries[1], zoom, 0, 1)
+        const blocks = await Promise.all([...reads, same])
+        expect(file.read.mock.calls).toEqual([[100, 100]])
+        expect(blocks[1]).toBe(blocks[2])
+        expect(wire.pendingBlocks.size).toBe(0)
+    })
+})
